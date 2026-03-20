@@ -134,47 +134,58 @@ async function doLogout() {
 // =====================
 // SESSION LISTENER — FIX: só recarrega dados no SIGNED_IN, ignora TOKEN_REFRESHED etc.
 // =====================
-sb.auth.onAuthStateChange(async (event, session) => {
-  console.log("[Auth]", event, session?.user?.email || "no session");
-  const isLogin = event === "SIGNED_IN" || event === "INITIAL_SESSION";
-
-  if (isLogin && session?.user) {
-    const newUserId = session.user.id;
-    const alreadyLoaded = state.userId === newUserId && state.categories.length > 0;
-    state.userId = newUserId;
-
-    // Mostra o app, esconde auth
+// Função central que inicia o app com um usuário autenticado
+async function startApp(user) {
+  if (state.userId === user.id && state.categories.length > 0) {
+    // Já carregado (ex: TOKEN_REFRESHED) — só garante que o app está visível
     document.getElementById("auth-screen").style.display = "none";
     document.getElementById("app").style.display         = "flex";
-    document.getElementById("sidebar-user").textContent  = session.user.email;
-    document.getElementById("content").innerHTML         = '<div class="loading-state">Carregando dados...</div>';
-    initTheme();
-
-    // Carrega dados se necessário
-    if (!alreadyLoaded) {
-      const ok = await loadData();
-      if (!ok) {
-        document.getElementById("content").innerHTML =
-          '<div class="loading-state" style="color:#D85A30">Erro ao carregar dados.<br>Verifique sua conexão e atualize a página.</div>';
-        return;
-      }
-    }
-
-    // Reconstrói nav e renderiza
-    console.log("[Auth] rendering page:", state.page, "cats:", state.categories.length);
     buildNav();
     render();
+    return;
+  }
 
+  state.userId = user.id;
+  document.getElementById("auth-screen").style.display = "none";
+  document.getElementById("app").style.display         = "flex";
+  document.getElementById("sidebar-user").textContent  = user.email;
+  document.getElementById("content").innerHTML         = '<div class="loading-state">Carregando dados...</div>';
+  initTheme();
+
+  const ok = await loadData();
+  if (!ok) {
+    document.getElementById("content").innerHTML =
+      '<div class="loading-state" style="color:#D85A30">Erro ao carregar dados.<br>Verifique sua conexão e atualize a página.</div>';
+    return;
+  }
+
+  buildNav();
+  render();
+}
+
+function showLogin() {
+  state.userId = null;
+  resetState();
+  document.getElementById("auth-screen").style.display = "flex";
+  document.getElementById("app").style.display         = "none";
+}
+
+// Verifica sessão ativa ao carregar a página (resolve o bug do F5)
+(async () => {
+  const { data } = await sb.auth.getSession();
+  if (data?.session?.user) {
+    await startApp(data.session.user);
+  } else {
+    showLogin();
+  }
+})();
+
+// Listener para login/logout em tempo real
+sb.auth.onAuthStateChange(async (event, session) => {
+  if (event === "SIGNED_IN" && session?.user) {
+    await startApp(session.user);
   } else if (event === "SIGNED_OUT") {
-    state.userId = null;
-    resetState();
-    document.getElementById("auth-screen").style.display = "flex";
-    document.getElementById("app").style.display         = "none";
-
-  } else if (event === "INITIAL_SESSION" && !session) {
-    state.userId = null;
-    document.getElementById("auth-screen").style.display = "flex";
-    document.getElementById("app").style.display         = "none";
+    showLogin();
   }
 });
 
