@@ -57,22 +57,15 @@ const monthKey = d  => new Date(d).toLocaleString("pt-BR", { month: "short", yea
 function calcFirstInstallmentDate(purchaseDate, closingDay, dueDay) {
   // Parse sem timezone — YYYY-MM-DD direto
   const [year, month, day] = purchaseDate.split("-").map(Number);
-  // month já é 1-indexed (ex: março = 3)
 
-  // Se comprou ANTES ou NO dia de fechamento → cai na fatura do próximo mês
-  // Se comprou DEPOIS do fechamento → a fatura já fechou, cai na fatura do mês seguinte ao próximo
-  // Exemplo: fecha dia 28
-  //   Comprou dia 19 (< 28) → cai em abril  (mês atual + 1)
-  //   Comprou dia 29 (> 28) → cai em maio   (mês atual + 2)
-  const add = day > closingDay ? 2 : 1;
-
-  let vencMonth = month + add;      // 1-indexed
+  // Regra: se comprou ANTES do fechamento → vence neste mês
+  //        se comprou NO dia ou APÓS      → fatura já fechou, vence no próximo mês
+  // Ex: fecha dia 1, comprou 20/03 → 20 >= 1 → vence em abril
+  // Ex: fecha dia 28, comprou 20/03 → 20 < 28 → vence em março
+  let vencMonth = day < closingDay ? month : month + 1;
   let vencYear  = year;
 
-  while (vencMonth > 12) {
-    vencMonth -= 12;
-    vencYear  += 1;
-  }
+  if (vencMonth > 12) { vencMonth -= 12; vencYear += 1; }
 
   const mm = String(vencMonth).padStart(2, "0");
   const dd = String(dueDay).padStart(2, "0");
