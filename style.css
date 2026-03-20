@@ -128,8 +128,6 @@ body {
   font-weight: 500;
 }
 
-.nav-icon { font-size: 16px; width: 20px; text-align: center; }
-
 .sidebar-bottom {
   margin-top: auto;
   border-top: 1px solid #2a2d3a;
@@ -245,7 +243,13 @@ body {
   margin-bottom: 1rem;
 }
 
-.form-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: .5rem; }
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: .5rem;
+  transition: opacity .2s;
+}
 
 .form-group label {
   font-size: 11px;
@@ -264,24 +268,26 @@ body {
   color: #e8e8e8;
   outline: none;
   width: 100%;
+}
+
+.form-group select {
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  padding-right: 30px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b6d80' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
-  padding-right: 30px;
-}
-
-.form-group input {
-  background-image: none;
-  padding-right: 10px;
 }
 
 .form-group input:focus,
 .form-group select:focus { border-color: #7F77DD; }
 
-.form-group select option { background: #16181f; }
+.form-group select option { background: #16181f; color: #e8e8e8; }
+
+.form-group input[type="text"] {
+  font-variant-numeric: tabular-nums;
+}
 
 .form-actions { display: flex; gap: 8px; margin-top: .5rem; }
 
@@ -386,8 +392,7 @@ body {
   background: #0f1117;
   border: 1px solid #2a2d3a;
   border-radius: 8px;
-  padding: 7px 10px;
-  padding-right: 28px;
+  padding: 7px 28px 7px 10px;
   font-size: 12px;
   color: #9a9db0;
   appearance: none;
@@ -490,6 +495,23 @@ body {
 }
 
 /* =====================
+   THEME TOGGLE BUTTON
+   ===================== */
+.theme-toggle {
+  background: transparent;
+  border: 1px solid #2a2d3a;
+  color: #9a9db0;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.theme-toggle:hover { border-color: #7F77DD; color: #7F77DD; }
+
+/* =====================
    MOBILE
    ===================== */
 .hamburger {
@@ -521,26 +543,6 @@ body {
 }
 
 /* =====================
-   THEME TOGGLE BUTTON
-   ===================== */
-.theme-toggle {
-  background: transparent;
-  border: 1px solid #2a2d3a;
-  color: #9a9db0;
-  padding: 6px 14px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
-  transition: all .15s;
-  white-space: nowrap;
-}
-.theme-toggle:hover {
-  border-color: #7F77DD;
-  color: #7F77DD;
-}
-
-/* =====================
    LIGHT MODE
    ===================== */
 body.light-mode {
@@ -548,11 +550,7 @@ body.light-mode {
   color: #1a1a2e;
 }
 
-body.light-mode .sidebar {
-  background: #ffffff;
-  border-right-color: #e0e0e8;
-}
-
+body.light-mode .sidebar { background: #ffffff; border-right-color: #e0e0e8; }
 body.light-mode .sidebar-logo { color: #1a1a2e; border-bottom-color: #e0e0e8; }
 body.light-mode .nav-item { color: #666; }
 body.light-mode .nav-item:hover { background: #f0f0f8; color: #1a1a2e; }
@@ -575,22 +573,23 @@ body.light-mode .section { background: #ffffff; border-color: #e0e0e8; }
 body.light-mode .section-title { color: #1a1a2e; }
 
 body.light-mode .form-group label { color: #999; }
+
 body.light-mode .form-group input,
 body.light-mode .form-group select {
   background: #f4f5f7;
   border-color: #e0e0e8;
   color: #1a1a2e;
+}
+
+body.light-mode .form-group select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
 }
 
-body.light-mode .form-group input {
-  background-image: none;
-  padding-right: 10px;
-}
 body.light-mode .form-group input:focus,
 body.light-mode .form-group select:focus { border-color: #7F77DD; }
+
 body.light-mode .form-group select option { background: #ffffff; color: #1a1a2e; }
 
 body.light-mode .btn-secondary { color: #666; border-color: #e0e0e8; }
@@ -608,7 +607,7 @@ body.light-mode .badge-cat { background: #ededfc; color: #7F77DD; }
 body.light-mode .badge-bank { background: #e1f5ee; color: #1D9E75; }
 
 body.light-mode .filters select {
-  background: #f4f5f7;
+  background-color: #f4f5f7;
   border-color: #e0e0e8;
   color: #666;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
@@ -634,14 +633,3 @@ body.light-mode .auth-logo { color: #1a1a2e; }
 body.light-mode .auth-tab { color: #999; }
 body.light-mode .auth-tab.active { color: #7F77DD; border-bottom-color: #7F77DD; }
 body.light-mode .auth-tabs { border-bottom-color: #e0e0e8; }
-
-/* =====================
-   FORM SMART STATES
-   ===================== */
-.form-group {
-  transition: opacity .2s;
-}
-
-.form-group input[type="text"] {
-  font-variant-numeric: tabular-nums;
-}
