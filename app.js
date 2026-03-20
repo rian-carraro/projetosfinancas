@@ -423,6 +423,29 @@ function renderDashboard() {
       </div>
       ${txs.slice(0, 5).map(tx => txRow(tx)).join("") || `<div class="empty">Nenhuma transação</div>`}
     </div>
+
+    <div class="section">
+      <div class="section-title">Relatórios</div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:1rem">
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:12px;color:#666;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Selecione o mês</div>
+          <select id="report-month" style="width:100%;background:#0f1117;border:1px solid #2a2d3a;border-radius:8px;padding:8px 30px 8px 10px;font-size:13px;color:#e8e8e8;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b6d80' d='M6 8L1 3h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center">
+            ${[...new Set(txs.map(t => t.date.substring(0,7)))].sort().reverse().map(m => {
+              const [y, mo] = m.split("-");
+              const label = new Date(parseInt(y), parseInt(mo)-1, 1).toLocaleString("pt-BR", {month:"long", year:"numeric"});
+              return `<option value="${m}">${label}</option>`;
+            }).join("")}
+            <option value="todos">Todos os meses</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        <button class="btn btn-secondary" onclick="exportPDF()">Baixar PDF — contas do mês</button>
+        <button class="btn btn-secondary" onclick="exportPDFCards()">Baixar PDF — cartões</button>
+        <button class="btn btn-secondary" onclick="exportXLSX()">Baixar planilha — contas do mês</button>
+        <button class="btn btn-secondary" onclick="exportXLSXCards()">Baixar planilha — cartões</button>
+      </div>
+    </div>
   `;
 }
 
@@ -1274,10 +1297,12 @@ async function deleteCard(id) {
 // ACTIONS — FIXED
 // =====================
 function onFixedMethodChange() {
-  const method = document.getElementById("fx-method")?.value;
+  const method      = document.getElementById("fx-method")?.value;
   const boletoGroup = document.getElementById("fx-boleto-group");
   if (!boletoGroup) return;
+  // form-group usa flex — precisa setar flex ao mostrar
   boletoGroup.style.display = method === "Boleto" ? "flex" : "none";
+  boletoGroup.style.flexDirection = "column";
   if (method !== "Boleto") {
     const sel = document.getElementById("fx-boleto");
     if (sel) sel.value = "";
@@ -1395,6 +1420,305 @@ async function deleteCategory(id) {
   else alert("Erro ao excluir categoria: " + error.message);
 }
 
+
+// =====================
+// RELATÓRIOS
+// =====================
+
+function getReportMonth() {
+  const sel = document.getElementById("report-month");
+  return sel ? sel.value : "todos";
+}
+
+function filterTxsByMonth(month) {
+  if (month === "todos") return state.transactions;
+  return state.transactions.filter(t => t.date.startsWith(month));
+}
+
+function monthLabel(month) {
+  if (month === "todos") return "Todos os meses";
+  const [y, m] = month.split("-");
+  return new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+}
+
+function fmtPDF(v) {
+  return "R$ " + Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ---- PDF — Contas do mês ----
+function exportPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc  = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const month = getReportMonth();
+  const txs  = filterTxsByMonth(month);
+  const inc  = txs.filter(t => t.type==="receita").reduce((s,t) => s+parseFloat(t.amount), 0);
+  const exp  = txs.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
+
+  // Header
+  doc.setFillColor(127, 119, 221);
+  doc.roundedRect(14, 10, 182, 22, 4, 4, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  doc.text("Minhas Finanças", 20, 23);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.text("Relatório de movimentações — " + monthLabel(month), 20, 29);
+
+  // Summary cards
+  const cards = [
+    { label: "Receitas", value: fmtPDF(inc), color: [29, 158, 117] },
+    { label: "Despesas", value: fmtPDF(exp), color: [216, 90, 48]  },
+    { label: "Saldo",    value: fmtPDF(inc-exp), color: inc-exp >= 0 ? [29,158,117] : [216,90,48] },
+  ];
+  cards.forEach((c, i) => {
+    const x = 14 + i * 62;
+    doc.setFillColor(245, 245, 250);
+    doc.roundedRect(x, 38, 58, 18, 3, 3, "F");
+    doc.setFontSize(8);
+    doc.setTextColor(120, 120, 140);
+    doc.setFont("helvetica", "normal");
+    doc.text(c.label, x + 4, 45);
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...c.color);
+    doc.text(c.value, x + 4, 52);
+  });
+
+  // Transactions table
+  doc.setTextColor(30, 30, 30);
+  doc.autoTable({
+    startY: 62,
+    head: [["Data", "Descrição", "Categoria", "Tipo", "Valor"]],
+    body: txs.map(t => {
+      const card = state.cards.find(c => Number(c.id) === Number(t.card_id));
+      const bank = state.banks.find(b => Number(b.id) === Number(t.bank_id));
+      return [
+        new Date(t.date + "T00:00:00").toLocaleDateString("pt-BR"),
+        t.description,
+        t.category || "-",
+        t.type === "receita" ? "Receita" : "Despesa",
+        (t.type === "despesa" ? "- " : "+ ") + fmtPDF(t.amount),
+      ];
+    }),
+    headStyles:  { fillColor: [127,119,221], textColor: 255, fontStyle: "bold", fontSize: 9 },
+    bodyStyles:  { fontSize: 8, textColor: [40,40,40] },
+    alternateRowStyles: { fillColor: [248,248,252] },
+    columnStyles: {
+      0: { cellWidth: 22 },
+      1: { cellWidth: 70 },
+      2: { cellWidth: 35 },
+      3: { cellWidth: 22 },
+      4: { cellWidth: 30, halign: "right" },
+    },
+    margin: { left: 14, right: 14 },
+    didParseCell: (data) => {
+      if (data.column.index === 4 && data.section === "body") {
+        const isExp = data.cell.raw.startsWith("-");
+        data.cell.styles.textColor = isExp ? [216,90,48] : [29,158,117];
+        data.cell.styles.fontStyle = "bold";
+      }
+    },
+  });
+
+  // Footer
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(160, 160, 160);
+    doc.text(`Gerado em ${new Date().toLocaleDateString("pt-BR")} — Minhas Finanças`, 14, 290);
+    doc.text(`Página ${i} de ${pageCount}`, 182, 290, { align: "right" });
+  }
+
+  doc.save(`relatorio-${month}-financas.pdf`);
+}
+
+// ---- PDF — Cartões ----
+function exportPDFCards() {
+  const { jsPDF } = window.jspdf;
+  const doc   = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const month = getReportMonth();
+  const txs   = filterTxsByMonth(month);
+
+  // Header
+  doc.setFillColor(127, 119, 221);
+  doc.roundedRect(14, 10, 182, 22, 4, 4, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  doc.text("Minhas Finanças", 20, 23);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.text("Relatório por cartão — " + monthLabel(month), 20, 29);
+
+  let currentY = 38;
+
+  if (state.cards.length === 0) {
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text("Nenhum cartão cadastrado.", 14, currentY + 10);
+  }
+
+  state.cards.forEach((card, idx) => {
+    const cardTxs = txs.filter(t => Number(t.card_id) === Number(card.id));
+    if (cardTxs.length === 0) return;
+
+    const total = cardTxs.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
+
+    // Card header bar
+    const hex = card.color || "#7F77DD";
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    doc.setFillColor(r, g, b);
+    doc.roundedRect(14, currentY, 182, 12, 3, 3, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${card.name}  (${card.type})`, 18, currentY + 8);
+    doc.text(`Total: ${fmtPDF(total)}`, 178, currentY + 8, { align: "right" });
+    currentY += 14;
+
+    doc.autoTable({
+      startY: currentY,
+      head: [["Data", "Descrição", "Categoria", "Parcela", "Valor"]],
+      body: cardTxs.map(t => [
+        new Date(t.date + "T00:00:00").toLocaleDateString("pt-BR"),
+        t.description,
+        t.category || "-",
+        t.installment_total > 1 ? `${t.installment_number}/${t.installment_total}` : "-",
+        fmtPDF(t.amount),
+      ]),
+      headStyles:  { fillColor: [r,g,b], textColor: 255, fontStyle: "bold", fontSize: 9 },
+      bodyStyles:  { fontSize: 8, textColor: [40,40,40] },
+      alternateRowStyles: { fillColor: [248,248,252] },
+      columnStyles: {
+        0: { cellWidth: 22 },
+        1: { cellWidth: 72 },
+        2: { cellWidth: 35 },
+        3: { cellWidth: 18, halign: "center" },
+        4: { cellWidth: 30, halign: "right", textColor: [216,90,48], fontStyle: "bold" },
+      },
+      margin: { left: 14, right: 14 },
+    });
+
+    currentY = doc.lastAutoTable.finalY + 8;
+    if (currentY > 260 && idx < state.cards.length - 1) {
+      doc.addPage();
+      currentY = 14;
+    }
+  });
+
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(160);
+    doc.text(`Gerado em ${new Date().toLocaleDateString("pt-BR")} — Minhas Finanças`, 14, 290);
+    doc.text(`Página ${i} de ${pageCount}`, 182, 290, { align: "right" });
+  }
+
+  doc.save(`relatorio-cartoes-${month}.pdf`);
+}
+
+// ---- XLSX — Contas do mês ----
+function exportXLSX() {
+  const month = getReportMonth();
+  const txs   = filterTxsByMonth(month);
+  const inc   = txs.filter(t => t.type==="receita").reduce((s,t) => s+parseFloat(t.amount), 0);
+  const exp   = txs.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
+
+  const wb = XLSX.utils.book_new();
+
+  // Summary sheet
+  const summaryData = [
+    ["Minhas Finanças — Relatório Mensal"],
+    ["Período:", monthLabel(month)],
+    ["Gerado em:", new Date().toLocaleDateString("pt-BR")],
+    [],
+    ["RESUMO"],
+    ["Receitas", inc],
+    ["Despesas", exp],
+    ["Saldo", inc - exp],
+  ];
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+  wsSummary["!cols"] = [{ wch: 20 }, { wch: 18 }];
+  XLSX.utils.book_append_sheet(wb, wsSummary, "Resumo");
+
+  // Transactions sheet
+  const headers = ["Data", "Descrição", "Categoria", "Banco", "Cartão", "Método", "Tipo", "Valor (R$)"];
+  const rows = txs.map(t => {
+    const card = state.cards.find(c => Number(c.id) === Number(t.card_id));
+    const bank = state.banks.find(b => Number(b.id) === Number(t.bank_id));
+    return [
+      new Date(t.date + "T00:00:00").toLocaleDateString("pt-BR"),
+      t.description,
+      t.category || "",
+      bank?.name || "",
+      card?.name || "",
+      t.payment_method || "",
+      t.type === "receita" ? "Receita" : "Despesa",
+      t.type === "despesa" ? -parseFloat(t.amount) : parseFloat(t.amount),
+    ];
+  });
+
+  const wsData = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  wsData["!cols"] = [
+    { wch: 12 }, { wch: 35 }, { wch: 18 }, { wch: 16 },
+    { wch: 16 }, { wch: 20 }, { wch: 10 }, { wch: 14 },
+  ];
+  XLSX.utils.book_append_sheet(wb, wsData, "Movimentações");
+
+  // Category breakdown sheet
+  const catMap = {};
+  txs.filter(t => t.type==="despesa").forEach(t => {
+    const k = t.category || "Sem categoria";
+    catMap[k] = (catMap[k] || 0) + parseFloat(t.amount);
+  });
+  const catRows = Object.entries(catMap).sort((a,b) => b[1]-a[1]).map(([cat, val]) => [cat, val]);
+  const wsCat = XLSX.utils.aoa_to_sheet([["Categoria", "Total (R$)"], ...catRows]);
+  wsCat["!cols"] = [{ wch: 20 }, { wch: 14 }];
+  XLSX.utils.book_append_sheet(wb, wsCat, "Por Categoria");
+
+  XLSX.writeFile(wb, `financas-${month}.xlsx`);
+}
+
+// ---- XLSX — Cartões ----
+function exportXLSXCards() {
+  const month = getReportMonth();
+  const txs   = filterTxsByMonth(month);
+  const wb    = XLSX.utils.book_new();
+
+  // One sheet per card
+  state.cards.forEach(card => {
+    const cardTxs = txs.filter(t => Number(t.card_id) === Number(card.id));
+    if (cardTxs.length === 0) return;
+
+    const total = cardTxs.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
+    const headers = ["Data", "Descrição", "Categoria", "Parcela", "Valor (R$)"];
+    const rows = cardTxs.map(t => [
+      new Date(t.date + "T00:00:00").toLocaleDateString("pt-BR"),
+      t.description,
+      t.category || "",
+      t.installment_total > 1 ? `${t.installment_number}/${t.installment_total}` : "",
+      parseFloat(t.amount),
+    ]);
+    rows.push([], ["Total", "", "", "", total]);
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws["!cols"] = [{ wch: 12 }, { wch: 35 }, { wch: 18 }, { wch: 10 }, { wch: 14 }];
+
+    // Sheet name max 31 chars
+    const sheetName = card.name.substring(0, 28);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  });
+
+  if (wb.SheetNames.length === 0) {
+    alert("Nenhuma transação de cartão encontrada no período selecionado.");
+    return;
+  }
+
+  XLSX.writeFile(wb, `cartoes-${month}.xlsx`);
+}
 // =====================
 // THEME
 // =====================
