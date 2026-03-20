@@ -135,8 +135,7 @@ async function doLogout() {
 // SESSION LISTENER — FIX: só recarrega dados no SIGNED_IN, ignora TOKEN_REFRESHED etc.
 // =====================
 sb.auth.onAuthStateChange(async (event, session) => {
-  // Eventos que importam: SIGNED_IN (login) e INITIAL_SESSION (F5 com sessão ativa)
-  // Ignoramos TOKEN_REFRESHED, USER_UPDATED etc. para não recarregar dados desnecessariamente
+  console.log("[Auth]", event, session?.user?.email || "no session");
   const isLogin = event === "SIGNED_IN" || event === "INITIAL_SESSION";
 
   if (isLogin && session?.user) {
@@ -144,18 +143,25 @@ sb.auth.onAuthStateChange(async (event, session) => {
     const alreadyLoaded = state.userId === newUserId && state.categories.length > 0;
     state.userId = newUserId;
 
-    // Mostra o app
+    // Mostra o app, esconde auth
     document.getElementById("auth-screen").style.display = "none";
     document.getElementById("app").style.display         = "flex";
     document.getElementById("sidebar-user").textContent  = session.user.email;
+    document.getElementById("content").innerHTML         = '<div class="loading-state">Carregando dados...</div>';
     initTheme();
 
-    // Só recarrega dados se ainda não carregou (evita duplo render no login normal)
+    // Carrega dados se necessário
     if (!alreadyLoaded) {
-      await loadData();
+      const ok = await loadData();
+      if (!ok) {
+        document.getElementById("content").innerHTML =
+          '<div class="loading-state" style="color:#D85A30">Erro ao carregar dados.<br>Verifique sua conexão e atualize a página.</div>';
+        return;
+      }
     }
 
-    // Sempre reconstrói a nav e renderiza ao entrar
+    // Reconstrói nav e renderiza
+    console.log("[Auth] rendering page:", state.page, "cats:", state.categories.length);
     buildNav();
     render();
 
@@ -166,7 +172,6 @@ sb.auth.onAuthStateChange(async (event, session) => {
     document.getElementById("app").style.display         = "none";
 
   } else if (event === "INITIAL_SESSION" && !session) {
-    // F5 sem sessão salva → vai para login
     state.userId = null;
     document.getElementById("auth-screen").style.display = "flex";
     document.getElementById("app").style.display         = "none";
@@ -188,21 +193,27 @@ function resetState() {
 // =====================
 async function loadData() {
   const uid = state.userId;
-  if (!uid) return;
-  const [r1, r2, r3, r4, r5, r6] = await Promise.all([
-    sb.from("transactions")  .select("*").eq("user_id", uid).order("created_at", { ascending: false }),
-    sb.from("categories")    .select("*").eq("user_id", uid).order("name"),
-    sb.from("goals")         .select("*").eq("user_id", uid).order("created_at"),
-    sb.from("cards")         .select("*").eq("user_id", uid).order("created_at"),
-    sb.from("fixed_expenses").select("*").eq("user_id", uid).order("created_at"),
-    sb.from("banks")         .select("*").eq("user_id", uid).order("created_at"),
-  ]);
-  state.transactions = r1.data || [];
-  state.categories   = (r2.data || []).map(x => ({ id: x.id, name: x.name }));
-  state.goals        = r3.data || [];
-  state.cards        = r4.data || [];
-  state.fixed        = r5.data || [];
-  state.banks        = r6.data || [];
+  if (!uid) return false;
+  try {
+    const [r1, r2, r3, r4, r5, r6] = await Promise.all([
+      sb.from("transactions")  .select("*").eq("user_id", uid).order("created_at", { ascending: false }),
+      sb.from("categories")    .select("*").eq("user_id", uid).order("name"),
+      sb.from("goals")         .select("*").eq("user_id", uid).order("created_at"),
+      sb.from("cards")         .select("*").eq("user_id", uid).order("created_at"),
+      sb.from("fixed_expenses").select("*").eq("user_id", uid).order("created_at"),
+      sb.from("banks")         .select("*").eq("user_id", uid).order("created_at"),
+    ]);
+    state.transactions = r1.data || [];
+    state.categories   = (r2.data || []).map(x => ({ id: x.id, name: x.name }));
+    state.goals        = r3.data || [];
+    state.cards        = r4.data || [];
+    state.fixed        = r5.data || [];
+    state.banks        = r6.data || [];
+    return true;
+  } catch (e) {
+    console.error("Erro ao carregar dados:", e);
+    return false;
+  }
 }
 
 // =====================
