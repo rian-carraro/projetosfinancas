@@ -234,7 +234,7 @@ async function loadData() {
   const uid = state.userId;
   if (!uid) return false;
   try {
-    const [r1, r2, r3, r4, r5, r6, r7] = await Promise.all([
+    const [r1, r2, r3, r4, r5, r6] = await Promise.all([
       sb.from("transactions")  .select("*").eq("user_id", uid).order("created_at", { ascending: false }),
       sb.from("categories")    .select("*").eq("user_id", uid).order("name"),
       sb.from("goals")         .select("*").eq("user_id", uid).order("created_at"),
@@ -248,7 +248,15 @@ async function loadData() {
     state.cards        = r4.data || [];
     state.fixed        = r5.data || [];
     state.banks        = r6.data || [];
-  state.boletos      = r7.data || [];
+
+    // Boletos separado — não quebra o app se a tabela tiver problema
+    try {
+      const r7 = await sb.from("boletos").select("*").eq("user_id", uid).eq("paid", false).order("due_date");
+      state.boletos = r7.data || [];
+    } catch (e) {
+      state.boletos = [];
+    }
+
     return true;
   } catch (e) {
     console.error("Erro ao carregar dados:", e);
@@ -332,7 +340,7 @@ function renderDashboard() {
   const boletosHoje    = state.boletos.filter(b => b.due_date === today());
   const boletosVencidos = state.boletos.filter(b => b.due_date < today());
   const alertBoletos = (boletosHoje.length || boletosVencidos.length) ? `
-    <div style="background:#2e1a0d;border:1px solid #D85A30;border-radius:12px;padding:14px 18px;margin-bottom:1.2rem;display:flex;justify-content:space-between;align-items:center">
+    <div style="background:#1a1a1a;border:1px solid #E24B4A;border-radius:12px;padding:14px 18px;margin-bottom:1.2rem;display:flex;justify-content:space-between;align-items:center">
       <div>
         <div style="font-size:14px;font-weight:500;color:#D85A30">
           ${boletosHoje.length ? `${boletosHoje.length} boleto(s) vencendo hoje` : ""}
@@ -885,7 +893,11 @@ function renderBoletos() {
         </div>
         <div class="form-group">
           <label>Arquivo (PDF ou imagem, opcional)</label>
-          <input id="bol-file" type="file" accept=".pdf,image/*" style="padding:6px;font-size:13px">
+          <label for="bol-file" id="bol-file-label" style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0f1117;border:1px solid #2a2d3a;border-radius:8px;cursor:pointer;font-size:13px;color:#9a9db0;transition:border-color .15s" onmouseover="this.style.borderColor='#7F77DD'" onmouseout="this.style.borderColor='#2a2d3a'">
+            <span style="background:#7F77DD;color:#fff;padding:4px 12px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap">Escolher arquivo</span>
+            <span id="bol-file-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Nenhum arquivo selecionado</span>
+          </label>
+          <input id="bol-file" type="file" accept=".pdf,image/*" style="display:none" onchange="document.getElementById('bol-file-name').textContent = this.files[0]?.name || 'Nenhum arquivo selecionado'">
         </div>
       </div>
       <div class="form-actions">
@@ -895,14 +907,14 @@ function renderBoletos() {
     </div>
 
     ${vencendoHoje.length ? `
-    <div class="section" style="border-color:#D85A30">
-      <div class="section-title" style="color:#D85A30">Vencendo hoje (${vencendoHoje.length})</div>
+    <div class="section" style="border-color:#BA7517">
+      <div class="section-title" style="color:#BA7517">Vencendo hoje (${vencendoHoje.length})</div>
       ${vencendoHoje.map(b => boletoRow(b, "hoje")).join("")}
     </div>` : ""}
 
     ${vencidos.length ? `
-    <div class="section" style="border-color:#884F0B">
-      <div class="section-title" style="color:#BA7517">Vencidos (${vencidos.length})</div>
+    <div class="section" style="border-color:#A32D2D">
+      <div class="section-title" style="color:#E24B4A">Vencidos (${vencidos.length})</div>
       ${vencidos.map(b => boletoRow(b, "vencido")).join("")}
     </div>` : ""}
 
@@ -921,17 +933,19 @@ function renderBoletos() {
 
 function boletoRow(b, status) {
   const dueFormatted = new Date(b.due_date + "T00:00:00").toLocaleDateString("pt-BR");
-  const borderColor  = status === "hoje" ? "#D85A30" : status === "vencido" ? "#BA7517" : "#2a2d3a";
-  const dateColor    = status === "hoje" ? "#D85A30" : status === "vencido" ? "#BA7517" : "#555";
+  const borderColor  = status === "vencido" ? "#E24B4A" : status === "hoje" ? "#BA7517" : "#1D9E75";
+  const dateColor    = status === "vencido" ? "#E24B4A" : status === "hoje" ? "#BA7517" : "#1D9E75";
+  const statusLabel  = status === "vencido" ? "Vencido" : status === "hoje" ? "Vence hoje" : "No prazo";
 
   return `
     <div style="display:flex;align-items:center;padding:12px 0;border-bottom:1px solid #1e2030;gap:12px">
       <div style="width:4px;height:48px;border-radius:99px;background:${borderColor};flex-shrink:0"></div>
       <div style="flex:1;min-width:0">
         <div style="font-size:14px;font-weight:500;color:#e8e8e8">${b.description}</div>
-        <div style="font-size:12px;color:${dateColor};margin-top:3px">
-          Vence ${dueFormatted}
-          ${b.barcode ? `<span style="margin-left:8px;font-family:monospace;font-size:11px;color:#555">${b.barcode.substring(0,20)}...</span>` : ""}
+        <div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+          <span style="font-size:11px;font-weight:500;padding:2px 8px;border-radius:99px;background:${borderColor}22;color:${borderColor}">${statusLabel}</span>
+          <span style="font-size:12px;color:${dateColor}">Vence ${dueFormatted}</span>
+          ${b.barcode ? `<span style="font-family:monospace;font-size:11px;color:#555">${b.barcode.substring(0,20)}...</span>` : ""}
         </div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
