@@ -21,7 +21,11 @@ function parseCurrency(str) {
 const SB_URL = "https://alyzslzefohatbxbmnbb.supabase.co";
 const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFseXpzbHplZm9oYXRieGJtbmJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwMDU2NDksImV4cCI6MjA4OTU4MTY0OX0.H_y7gG3CrLusnCrdFYzkwdF5b_0a6mo8U9AY_YKhrr0";
 const sb = supabase.createClient(SB_URL, SB_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false }
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    storage: window.sessionStorage,
+  }
 });
 
 // =====================
@@ -138,16 +142,24 @@ async function doLogout() {
 // SESSION LISTENER — FIX: só recarrega dados no SIGNED_IN, ignora TOKEN_REFRESHED etc.
 // =====================
 sb.auth.onAuthStateChange(async (event, session) => {
-  if (event === "SIGNED_IN" && session?.user) {
+  // SIGNED_IN    → login normal
+  // INITIAL_SESSION → F5 com sessão no sessionStorage
+  if ((event === "SIGNED_IN" || event === "INITIAL_SESSION") && session?.user) {
+    // Evita recarregar dados se o userId já estava carregado (ex: TOKEN_REFRESHED)
+    const alreadyLoaded = state.userId === session.user.id;
     state.userId = session.user.id;
+
     document.getElementById("auth-screen").style.display = "none";
     document.getElementById("app").style.display         = "flex";
     document.getElementById("sidebar-user").textContent  = session.user.email;
     initTheme();
-    await loadData();
-    buildNav();
-    render();
-  } else if (event === "SIGNED_OUT") {
+
+    if (!alreadyLoaded) {
+      await loadData();
+      buildNav();
+      render();
+    }
+  } else if (event === "SIGNED_OUT" || (event === "INITIAL_SESSION" && !session)) {
     state.userId = null;
     document.getElementById("auth-screen").style.display = "flex";
     document.getElementById("app").style.display         = "none";
