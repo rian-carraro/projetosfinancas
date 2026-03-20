@@ -24,9 +24,31 @@ const sb = supabase.createClient(SB_URL, SB_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    storage: window.sessionStorage,
+    // localStorage padrão — confiável em todos os ambientes
   }
 });
+
+// Apaga a sessão quando a aba/janela é fechada (não no F5)
+// beforeunload dispara nos dois casos, então usamos uma flag de navegação
+sessionStorage.setItem("tab_active", "1");
+window.addEventListener("beforeunload", () => {
+  // Se a flag sumiu, significa que é um fechamento real (não F5)
+  // Mas beforeunload não distingue F5 de fechar — usamos pagehide + visibilitychange
+});
+
+// pageshow com persisted=false = primeira carga real (não F5 de cache)
+// Usamos sessionStorage para detectar se é uma nova aba ou F5
+const isNewTab = !sessionStorage.getItem("session_exists");
+if (isNewTab) {
+  // Nova aba/janela — apaga a sessão do Supabase do localStorage
+  Object.keys(localStorage).forEach(key => {
+    if (key.startsWith("sb-") || key.includes("supabase")) {
+      localStorage.removeItem(key);
+    }
+  });
+}
+// Marca que esta aba já existe (sobrevive ao F5)
+sessionStorage.setItem("session_exists", "1");
 
 // =====================
 // CONSTANTS
@@ -170,17 +192,20 @@ function showLogin() {
   document.getElementById("app").style.display         = "none";
 }
 
-// Verifica sessão ativa ao carregar a página (resolve o bug do F5)
+// Inicia o app — verifica sessão existente primeiro, depois escuta eventos
 (async () => {
-  const { data } = await sb.auth.getSession();
-  if (data?.session?.user) {
-    await startApp(data.session.user);
-  } else {
-    showLogin();
+  try {
+    const { data } = await sb.auth.getSession();
+    if (data?.session?.user) {
+      await startApp(data.session.user);
+      return;
+    }
+  } catch(e) {
+    console.warn("getSession error:", e);
   }
+  showLogin();
 })();
 
-// Listener para login/logout em tempo real
 sb.auth.onAuthStateChange(async (event, session) => {
   if (event === "SIGNED_IN" && session?.user) {
     await startApp(session.user);
