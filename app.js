@@ -765,9 +765,16 @@ function renderContasFixas() {
         </div>
         <div class="form-group">
           <label>Método de pagamento</label>
-          <select id="fx-method">
+          <select id="fx-method" onchange="onFixedMethodChange()">
             <option value="">-- nenhum --</option>
             ${METHODS.map(m => `<option>${m}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-group" id="fx-boleto-group" style="display:none">
+          <label>Boleto vinculado (opcional)</label>
+          <select id="fx-boleto">
+            <option value="">-- selecione --</option>
+            ${state.boletos.map(b => `<option value="${b.id}">${b.description} · ${new Date(b.due_date+"T00:00:00").toLocaleDateString("pt-BR")} · ${fmt(b.amount)}</option>`).join("")}
           </select>
         </div>
       </div>
@@ -790,6 +797,10 @@ function renderContasFixas() {
               Vence dia ${f.due_day}
               ${f.category       ? " · " + f.category       : ""}
               ${f.payment_method ? " · " + f.payment_method : ""}
+              ${f.boleto_id ? (() => {
+                const bol = state.boletos.find(b => Number(b.id) === Number(f.boleto_id));
+                return bol ? `<span class="badge" style="background:#1a1a2e;color:#7F77DD;margin-left:4px">Boleto: ${bol.description}</span>` : "";
+              })() : ""}
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:10px">
@@ -1262,6 +1273,17 @@ async function deleteCard(id) {
 // =====================
 // ACTIONS — FIXED
 // =====================
+function onFixedMethodChange() {
+  const method = document.getElementById("fx-method")?.value;
+  const boletoGroup = document.getElementById("fx-boleto-group");
+  if (!boletoGroup) return;
+  boletoGroup.style.display = method === "Boleto" ? "flex" : "none";
+  if (method !== "Boleto") {
+    const sel = document.getElementById("fx-boleto");
+    if (sel) sel.value = "";
+  }
+}
+
 async function saveFixed() {
   const uid            = state.userId;
   const description    = document.getElementById("fx-desc").value.trim();
@@ -1269,13 +1291,17 @@ async function saveFixed() {
   const due_day        = parseInt(document.getElementById("fx-due").value) || null;
   const category       = document.getElementById("fx-cat").value    || null;
   const payment_method = document.getElementById("fx-method").value || null;
+  const boleto_id      = document.getElementById("fx-boleto")?.value || null;
 
   if (!uid)          return alert("Sessão expirada. Faça login novamente.");
   if (!description)  return alert("Informe a descrição.");
   if (!amount)       return alert("Informe o valor.");
   if (!due_day)      return alert("Informe o dia de vencimento.");
 
-  const { data, error } = await sb.from("fixed_expenses").insert([{ description, amount, due_day, category, payment_method, user_id: uid }]).select().single();
+  const { data, error } = await sb.from("fixed_expenses").insert([{
+    description, amount, due_day, category, payment_method, user_id: uid,
+    boleto_id: boleto_id ? parseInt(boleto_id) : null,
+  }]).select().single();
   if (!error && data) { state.fixed.push(data); render(); }
   else if (error) alert("Erro ao salvar conta fixa: " + error.message);
 }
