@@ -135,28 +135,41 @@ async function doLogout() {
 // SESSION LISTENER — FIX: só recarrega dados no SIGNED_IN, ignora TOKEN_REFRESHED etc.
 // =====================
 sb.auth.onAuthStateChange(async (event, session) => {
-  // SIGNED_IN    → login normal
-  // INITIAL_SESSION → F5 com sessão no sessionStorage
-  if ((event === "SIGNED_IN" || event === "INITIAL_SESSION") && session?.user) {
-    // Evita recarregar dados se o userId já estava carregado (ex: TOKEN_REFRESHED)
-    const alreadyLoaded = state.userId === session.user.id;
-    state.userId = session.user.id;
+  // Eventos que importam: SIGNED_IN (login) e INITIAL_SESSION (F5 com sessão ativa)
+  // Ignoramos TOKEN_REFRESHED, USER_UPDATED etc. para não recarregar dados desnecessariamente
+  const isLogin = event === "SIGNED_IN" || event === "INITIAL_SESSION";
 
+  if (isLogin && session?.user) {
+    const newUserId = session.user.id;
+    const alreadyLoaded = state.userId === newUserId && state.categories.length > 0;
+    state.userId = newUserId;
+
+    // Mostra o app
     document.getElementById("auth-screen").style.display = "none";
     document.getElementById("app").style.display         = "flex";
     document.getElementById("sidebar-user").textContent  = session.user.email;
     initTheme();
 
+    // Só recarrega dados se ainda não carregou (evita duplo render no login normal)
     if (!alreadyLoaded) {
       await loadData();
-      buildNav();
-      render();
     }
-  } else if (event === "SIGNED_OUT" || (event === "INITIAL_SESSION" && !session)) {
+
+    // Sempre reconstrói a nav e renderiza ao entrar
+    buildNav();
+    render();
+
+  } else if (event === "SIGNED_OUT") {
+    state.userId = null;
+    resetState();
+    document.getElementById("auth-screen").style.display = "flex";
+    document.getElementById("app").style.display         = "none";
+
+  } else if (event === "INITIAL_SESSION" && !session) {
+    // F5 sem sessão salva → vai para login
     state.userId = null;
     document.getElementById("auth-screen").style.display = "flex";
     document.getElementById("app").style.display         = "none";
-    resetState();
   }
 });
 
