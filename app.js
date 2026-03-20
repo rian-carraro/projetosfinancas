@@ -51,29 +51,28 @@ const monthKey = d  => new Date(d).toLocaleString("pt-BR", { month: "short", yea
 
 // Calcula a data da primeira parcela com base na data de compra e dia de fechamento do cartão
 function calcFirstInstallmentDate(purchaseDate, closingDay, dueDay) {
-  const d = new Date(purchaseDate + "T00:00:00");
-  const year = d.getFullYear();
-  const month = d.getMonth(); // 0-indexed
-  const day = d.getDate();
+  // Parse da data sem timezone — pega ano/mês/dia direto da string YYYY-MM-DD
+  const [year, month, day] = purchaseDate.split("-").map(Number);
+  const monthIdx = month - 1; // 0-indexed para uso com Date
 
-  // Se comprou APÓS o fechamento, a fatura atual já fechou → cai na fatura do mês seguinte
+  // Se comprou APÓS o fechamento, a fatura atual já fechou → pula para a próxima
   // Ex: fecha dia 28, comprou dia 29 → não cai em fevereiro, cai em março
-  let billingMonth;
-  if (day > closingDay) {
-    billingMonth = month + 2; // pula uma fatura
-  } else {
-    billingMonth = month + 1; // cai na próxima fatura
+  let addMonthsCount = day > closingDay ? 2 : 1;
+
+  // Calcula o mês de vencimento somando addMonthsCount ao mês atual
+  let vencMonth = monthIdx + addMonthsCount; // ainda 0-indexed
+  let vencYear  = year;
+
+  // Normaliza overflow de mês (ex: mês 12 = janeiro do ano seguinte)
+  while (vencMonth >= 12) {
+    vencMonth -= 12;
+    vencYear  += 1;
   }
 
-  let billingYear = year;
-  if (billingMonth > 11) {
-    billingMonth -= 12;
-    billingYear += 1;
-  }
-
-  // O vencimento da fatura é no dia dueDay do mês de cobrança
-  const result = new Date(billingYear, billingMonth, dueDay);
-  return result.toISOString().split("T")[0];
+  // Monta a data de vencimento como string YYYY-MM-DD sem timezone
+  const mm  = String(vencMonth + 1).padStart(2, "0");
+  const dd  = String(dueDay).padStart(2, "0");
+  return `${vencYear}-${mm}-${dd}`;
 }
 
 // =====================
@@ -192,7 +191,8 @@ async function loadData() {
 // BANK BALANCE CALC
 // =====================
 function bankBalance(bank) {
-  const txs = state.transactions.filter(t => t.bank_id === bank.id);
+  const bankId = Number(bank.id);
+  const txs = state.transactions.filter(t => Number(t.bank_id) === bankId);
   const inc  = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
   const exp  = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
   return parseFloat(bank.initial_balance) + inc - exp;
@@ -367,7 +367,7 @@ function renderLancamentos() {
           <label>Categoria</label>
           <select id="f-cat"><option value="">-- nenhuma --</option>${catOptions}</select>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="f-bank-group">
           <label>Banco (opcional)</label>
           <select id="f-bank" onchange="onBankChange()">
             <option value="">-- nenhum --</option>${bankOptions}
@@ -412,48 +412,44 @@ function onBankChange() {
   const methodGroup = document.getElementById("f-method-group");
   const installGroup = document.getElementById("f-installments-group");
   if (bankId) {
-    typeEl.value = "receita";
-    typeEl.disabled = true;
-    document.getElementById("f-card").value = "";
-    cardGroup.style.opacity = "0.35";
-    cardGroup.style.pointerEvents = "none";
-    methodGroup.style.opacity = "0.35";
-    methodGroup.style.pointerEvents = "none";
-    installGroup.style.display = "none";
+    if (typeEl)        { typeEl.value = "receita"; typeEl.disabled = true; }
+    const cardEl = document.getElementById("f-card");
+    if (cardEl)        cardEl.value = "";
+    if (cardGroup)     { cardGroup.style.opacity = "0.35"; cardGroup.style.pointerEvents = "none"; }
+    if (methodGroup)   { methodGroup.style.opacity = "0.35"; methodGroup.style.pointerEvents = "none"; }
+    if (installGroup)  installGroup.style.display = "none";
   } else {
-    typeEl.disabled = false;
-    cardGroup.style.opacity = "";
-    cardGroup.style.pointerEvents = "";
-    methodGroup.style.opacity = "";
-    methodGroup.style.pointerEvents = "";
+    if (typeEl)        typeEl.disabled = false;
+    if (cardGroup)     { cardGroup.style.opacity = ""; cardGroup.style.pointerEvents = ""; }
+    if (methodGroup)   { methodGroup.style.opacity = ""; methodGroup.style.pointerEvents = ""; }
   }
 }
 
 // Quando seleciona cartão → limpa banco, mostra parcelas, filtra métodos
 function onCardChange() {
-  const cardId = document.getElementById("f-card").value;
-  const bankEl = document.getElementById("f-bank");
-  const methodEl = document.getElementById("f-method");
-  const bankGroup = bankEl.closest(".form-group");
+  const cardId      = document.getElementById("f-card")?.value;
+  const bankEl      = document.getElementById("f-bank");
+  const methodEl    = document.getElementById("f-method");
+  const bankGroup   = document.getElementById("f-bank-group");
   const installGroup = document.getElementById("f-installments-group");
+  if (!cardId || !bankEl || !methodEl) return;
+
   if (cardId) {
     bankEl.value = "";
-    bankGroup.style.opacity = "0.35";
-    bankGroup.style.pointerEvents = "none";
+    if (bankGroup)    { bankGroup.style.opacity = "0.35"; bankGroup.style.pointerEvents = "none"; }
     methodEl.innerHTML = `
       <option value="">-- selecione --</option>
       <option value="Cartão de crédito">Cartão de crédito</option>
       <option value="Cartão de débito">Cartão de débito</option>
     `;
-    installGroup.style.display = "flex";
+    if (installGroup) installGroup.style.display = "flex";
   } else {
-    bankGroup.style.opacity = "";
-    bankGroup.style.pointerEvents = "";
+    if (bankGroup)    { bankGroup.style.opacity = ""; bankGroup.style.pointerEvents = ""; }
     methodEl.innerHTML = `
       <option value="">-- automático --</option>
       ${METHODS.map(m => `<option>${m}</option>`).join("")}
     `;
-    installGroup.style.display = "none";
+    if (installGroup) installGroup.style.display = "none";
   }
 }
 
@@ -810,8 +806,8 @@ function renderCategorias() {
 // TX ROW COMPONENT
 // =====================
 function txRow(tx) {
-  const card = state.cards.find(c => c.id === tx.card_id);
-  const bank = state.banks.find(b => b.id === tx.bank_id);
+  const card = state.cards.find(c => Number(c.id) === Number(tx.card_id));
+  const bank = state.banks.find(b => Number(b.id) === Number(tx.bank_id));
   const installInfo = tx.installment_total > 1
     ? `<span class="badge badge-method">${tx.installment_number}/${tx.installment_total}x</span>`
     : "";
@@ -916,9 +912,9 @@ function clearTxForm() {
 }
 
 async function deleteTx(id) {
-  await sb.from("transactions").delete().eq("id", id);
-  state.transactions = state.transactions.filter(t => t.id !== id);
-  render();
+  const { error } = await sb.from("transactions").delete().eq("id", id).eq("user_id", state.userId);
+  if (!error) { state.transactions = state.transactions.filter(t => t.id !== id); render(); }
+  else alert("Erro ao excluir transação: " + error.message);
 }
 
 // =====================
