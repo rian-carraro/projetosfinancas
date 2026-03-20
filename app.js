@@ -55,27 +55,27 @@ const monthKey = d  => new Date(d).toLocaleString("pt-BR", { month: "short", yea
 
 // Calcula a data da primeira parcela com base na data de compra e dia de fechamento do cartão
 function calcFirstInstallmentDate(purchaseDate, closingDay, dueDay) {
-  // Parse da data sem timezone — pega ano/mês/dia direto da string YYYY-MM-DD
+  // Parse sem timezone — YYYY-MM-DD direto
   const [year, month, day] = purchaseDate.split("-").map(Number);
-  const monthIdx = month - 1; // 0-indexed para uso com Date
+  // month já é 1-indexed (ex: março = 3)
 
-  // Se comprou APÓS o fechamento, a fatura atual já fechou → pula para a próxima
-  // Ex: fecha dia 28, comprou dia 29 → não cai em fevereiro, cai em março
-  let addMonthsCount = day > closingDay ? 2 : 1;
+  // Se comprou ANTES ou NO dia de fechamento → cai na fatura do próximo mês
+  // Se comprou DEPOIS do fechamento → a fatura já fechou, cai na fatura do mês seguinte ao próximo
+  // Exemplo: fecha dia 28
+  //   Comprou dia 19 (< 28) → cai em abril  (mês atual + 1)
+  //   Comprou dia 29 (> 28) → cai em maio   (mês atual + 2)
+  const add = day > closingDay ? 2 : 1;
 
-  // Calcula o mês de vencimento somando addMonthsCount ao mês atual
-  let vencMonth = monthIdx + addMonthsCount; // ainda 0-indexed
+  let vencMonth = month + add;      // 1-indexed
   let vencYear  = year;
 
-  // Normaliza overflow de mês (ex: mês 12 = janeiro do ano seguinte)
-  while (vencMonth >= 12) {
+  while (vencMonth > 12) {
     vencMonth -= 12;
     vencYear  += 1;
   }
 
-  // Monta a data de vencimento como string YYYY-MM-DD sem timezone
-  const mm  = String(vencMonth + 1).padStart(2, "0");
-  const dd  = String(dueDay).padStart(2, "0");
+  const mm = String(vencMonth).padStart(2, "0");
+  const dd = String(dueDay).padStart(2, "0");
   return `${vencYear}-${mm}-${dd}`;
 }
 
