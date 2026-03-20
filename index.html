@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minhas Finanças</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+</head>
+<body>
+
+  <!-- AUTH SCREEN -->
+  <div id="auth-screen">
+    <div class="auth-card">
+      <div class="auth-logo"><span>Minhas Finanças</span></div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" onclick="switchAuthTab('login')">Entrar</button>
+        <button class="auth-tab" onclick="switchAuthTab('register')">Criar conta</button>
+      </div>
+
+      <div id="auth-login">
+        <div class="form-group"><label>Email</label><input id="login-email" type="email" placeholder="seu@email.com"></div>
+        <div class="form-group"><label>Senha</label><input id="login-password" type="password" placeholder="••••••••"></div>
+        <div id="login-error" class="auth-error"></div>
+        <button class="btn btn-primary w-full" onclick="doLogin()">Entrar</button>
+      </div>
+
+      <div id="auth-register" style="display:none">
+        <div class="form-group"><label>Nome</label><input id="reg-name" placeholder="Seu nome"></div>
+        <div class="form-group"><label>Email</label><input id="reg-email" type="email" placeholder="seu@email.com"></div>
+        <div class="form-group"><label>Senha</label><input id="reg-password" type="password" placeholder="mínimo 6 caracteres"></div>
+        <div id="reg-error" class="auth-error"></div>
+        <button class="btn btn-primary w-full" onclick="doRegister()">Criar conta</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div id="app" style="display:none">
+    <div class="sidebar-overlay" id="overlay" onclick="closeSidebar()"></div>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-logo"><span>Minhas</span>&nbsp;Finanças</div>
+      <nav id="nav"></nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user" id="sidebar-user"></div>
+        <button class="sidebar-logout" onclick="doLogout()">Sair</button>
+      </div>
+    </aside>
+
+    <div class="main" id="main">
+      <div class="topbar">
+        <div style="display:flex;align-items:center;gap:12px">
+          <button class="hamburger" onclick="toggleSidebar()">☰</button>
+          <h2 id="page-title">Dashboard</h2>
+        </div>
+        <button class="theme-toggle" onclick="toggleTheme()" id="theme-btn" title="Alternar tema">Modo claro</button>
+      </div>
+      <div class="content" id="content">
+        <div class="loading-state">Carregando...</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
