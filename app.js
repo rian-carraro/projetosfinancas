@@ -472,7 +472,7 @@ function renderLancamentos() {
           <label>Descrição *</label>
           <input id="f-desc" placeholder="Ex: Supermercado" required>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="f-date-group">
           <label>Data *</label>
           <input id="f-date" type="date" value="${today()}" required>
         </div>
@@ -519,6 +519,9 @@ function renderLancamentos() {
       ${state.transactions.slice(0, 10).map(tx => txRow(tx)).join("") || `<div class="empty">Nenhuma transação</div>`}
     </div>
   `;
+
+  // Aplica estado inicial correto baseado no tipo selecionado
+  setTimeout(onTxTypeChange, 0);
 }
 
 // Quando seleciona banco → tipo vira receita, bloqueia cartão e parcelas
@@ -571,8 +574,49 @@ function onCardChange() {
 }
 
 function onTxTypeChange() {
-  const bankEl = document.getElementById("f-bank");
-  if (bankEl && bankEl.value) { bankEl.value = ""; onBankChange(); }
+  const type        = document.getElementById("f-type")?.value;
+  const bankEl      = document.getElementById("f-bank");
+  const methodGroup = document.getElementById("f-method-group");
+  const cardGroup   = document.getElementById("f-card-group");
+  const installGroup = document.getElementById("f-installments-group");
+  const dateInput   = document.getElementById("f-date");
+  const dateGroup   = document.getElementById("f-date-group");
+
+  if (type === "receita") {
+    // Receita: esconde método, cartão, parcelas
+    if (methodGroup)   { methodGroup.style.opacity = "0.35"; methodGroup.style.pointerEvents = "none"; }
+    if (cardGroup)     { cardGroup.style.opacity   = "0.35"; cardGroup.style.pointerEvents   = "none"; document.getElementById("f-card").value = ""; }
+    if (installGroup)  installGroup.style.display = "none";
+    // Data: muda para input month
+    if (dateInput) {
+      const currentVal = dateInput.value; // YYYY-MM-DD
+      const monthVal   = currentVal ? currentVal.substring(0, 7) : new Date().toISOString().substring(0, 7);
+      dateInput.type   = "month";
+      dateInput.value  = monthVal;
+    }
+    if (dateGroup) {
+      const label = dateGroup.querySelector("label");
+      if (label) label.textContent = "MÊS *";
+    }
+    // Limpa banco se tiver
+    if (bankEl && bankEl.value) { bankEl.value = ""; onBankChange(); }
+  } else {
+    // Despesa: restaura tudo
+    if (methodGroup)   { methodGroup.style.opacity = ""; methodGroup.style.pointerEvents = ""; }
+    if (cardGroup)     { cardGroup.style.opacity   = ""; cardGroup.style.pointerEvents   = ""; }
+    // Data: volta para input date
+    if (dateInput) {
+      const currentVal = dateInput.value; // YYYY-MM
+      const dateVal    = currentVal ? currentVal + "-01" : today();
+      dateInput.type   = "date";
+      dateInput.value  = dateVal;
+    }
+    if (dateGroup) {
+      const label = dateGroup.querySelector("label");
+      if (label) label.textContent = "DATA *";
+    }
+    if (bankEl && bankEl.value) { bankEl.value = ""; onBankChange(); }
+  }
 }
 
 // =====================
@@ -1148,7 +1192,9 @@ async function saveTx() {
   const description    = document.getElementById("f-desc").value.trim();
   const amount         = parseCurrency(document.getElementById("f-amount").value);
   const category       = document.getElementById("f-cat").value    || null;
-  const date           = document.getElementById("f-date").value;
+  let date = document.getElementById("f-date").value;
+  // Se for receita com input type=month (YYYY-MM), converte para YYYY-MM-01
+  if (date && date.length === 7) date = date + "-01";
   const bank_id        = document.getElementById("f-bank").value   || null;
   const payment_method = document.getElementById("f-method").value || null;
   const card_id        = document.getElementById("f-card").value   || null;
