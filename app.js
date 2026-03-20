@@ -2,19 +2,15 @@
 // CURRENCY FORMATTING
 // =====================
 function formatCurrencyInput(el) {
-  // Remove everything except digits
   let digits = el.value.replace(/\D/g, "");
   if (!digits) { el.value = ""; return; }
-  // Pad to at least 3 digits so we always have cents
   while (digits.length < 3) digits = "0" + digits;
-  const cents = parseInt(digits, 10);
-  const reais = cents / 100;
+  const reais = parseInt(digits, 10) / 100;
   el.value = reais.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 function parseCurrency(str) {
   if (!str) return 0;
-  // Remove R$, dots (thousands), spaces — keep comma as decimal
   const clean = str.replace(/[R$\s.]/g, "").replace(",", ".");
   return parseFloat(clean) || 0;
 }
@@ -25,18 +21,15 @@ function parseCurrency(str) {
 const SB_URL = "https://alyzslzefohatbxbmnbb.supabase.co";
 const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFseXpzbHplZm9oYXRieGJtbmJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwMDU2NDksImV4cCI6MjA4OTU4MTY0OX0.H_y7gG3CrLusnCrdFYzkwdF5b_0a6mo8U9AY_YKhrr0";
 const sb = supabase.createClient(SB_URL, SB_KEY, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-  }
+  auth: { persistSession: false, autoRefreshToken: false }
 });
 
 // =====================
 // CONSTANTS
 // =====================
-const CAT_COLORS    = ["#7F77DD","#1D9E75","#D85A30","#378ADD","#BA7517","#D4537E","#639922","#884F0B"];
-const METHODS       = ["PIX","Cartão de crédito","Cartão de débito","Boleto","Dinheiro","À vista"];
-const DEFAULT_CATS  = ["Alimentação","Transporte","Moradia","Saúde","Lazer","Educação","Salário","Freelance","Outros"];
+const CAT_COLORS   = ["#7F77DD","#1D9E75","#D85A30","#378ADD","#BA7517","#D4537E","#639922","#884F0B"];
+const METHODS      = ["PIX","Cartão de crédito","Cartão de débito","Boleto","Dinheiro","À vista"];
+const DEFAULT_CATS = ["Alimentação","Transporte","Moradia","Saúde","Lazer","Educação","Salário","Freelance","Outros"];
 
 const PAGES = [
   { id: "dashboard",    label: "Dashboard"     },
@@ -56,11 +49,38 @@ const fmt      = v  => "R$ " + Number(v).toLocaleString("pt-BR", { minimumFracti
 const today    = () => new Date().toISOString().split("T")[0];
 const monthKey = d  => new Date(d).toLocaleString("pt-BR", { month: "short", year: "2-digit" });
 
+// Calcula a data da primeira parcela com base na data de compra e dia de fechamento do cartão
+function calcFirstInstallmentDate(purchaseDate, closingDay, dueDay) {
+  const d = new Date(purchaseDate + "T00:00:00");
+  const year = d.getFullYear();
+  const month = d.getMonth(); // 0-indexed
+  const day = d.getDate();
+
+  // Se comprou APÓS o fechamento, a fatura atual já fechou → cai na fatura do mês seguinte
+  // Ex: fecha dia 28, comprou dia 29 → não cai em fevereiro, cai em março
+  let billingMonth;
+  if (day > closingDay) {
+    billingMonth = month + 2; // pula uma fatura
+  } else {
+    billingMonth = month + 1; // cai na próxima fatura
+  }
+
+  let billingYear = year;
+  if (billingMonth > 11) {
+    billingMonth -= 12;
+    billingYear += 1;
+  }
+
+  // O vencimento da fatura é no dia dueDay do mês de cobrança
+  const result = new Date(billingYear, billingMonth, dueDay);
+  return result.toISOString().split("T")[0];
+}
+
 // =====================
 // STATE
 // =====================
 let state = {
-  user:         null,
+  userId:       null,  // FIX: usar userId separado do objeto user
   page:         "dashboard",
   transactions: [],
   categories:   [],
@@ -88,9 +108,7 @@ async function doLogin() {
   const password = document.getElementById("login-password").value;
   const errEl    = document.getElementById("login-error");
   errEl.textContent = "";
-
   if (!email || !password) { errEl.textContent = "Preencha email e senha."; return; }
-
   const { error } = await sb.auth.signInWithPassword({ email, password });
   if (error) errEl.textContent = "Email ou senha incorretos.";
 }
@@ -101,17 +119,15 @@ async function doRegister() {
   const password = document.getElementById("reg-password").value;
   const errEl    = document.getElementById("reg-error");
   errEl.textContent = "";
-
   if (!name || !email || !password) { errEl.textContent = "Preencha todos os campos."; return; }
-  if (password.length < 6)          { errEl.textContent = "Senha deve ter pelo menos 6 caracteres."; return; }
+  if (password.length < 6) { errEl.textContent = "Senha deve ter pelo menos 6 caracteres."; return; }
 
   const { data, error } = await sb.auth.signUp({ email, password, options: { data: { name } } });
   if (error) { errEl.textContent = error.message; return; }
 
-  // Criar categorias padrão para o novo usuário
   if (data.user) {
     const uid = data.user.id;
-    await sb.from("categories").insert(DEFAULT_CATS.map(name => ({ name, user_id: uid })));
+    await sb.from("categories").insert(DEFAULT_CATS.map(n => ({ name: n, user_id: uid })));
   }
 }
 
@@ -120,11 +136,11 @@ async function doLogout() {
 }
 
 // =====================
-// SESSION LISTENER
+// SESSION LISTENER — FIX: só recarrega dados no SIGNED_IN, ignora TOKEN_REFRESHED etc.
 // =====================
 sb.auth.onAuthStateChange(async (event, session) => {
-  if (session?.user) {
-    state.user = session.user;
+  if (event === "SIGNED_IN" && session?.user) {
+    state.userId = session.user.id;
     document.getElementById("auth-screen").style.display = "none";
     document.getElementById("app").style.display         = "flex";
     document.getElementById("sidebar-user").textContent  = session.user.email;
@@ -132,8 +148,8 @@ sb.auth.onAuthStateChange(async (event, session) => {
     await loadData();
     buildNav();
     render();
-  } else {
-    state.user = null;
+  } else if (event === "SIGNED_OUT") {
+    state.userId = null;
     document.getElementById("auth-screen").style.display = "flex";
     document.getElementById("app").style.display         = "none";
     resetState();
@@ -154,7 +170,8 @@ function resetState() {
 // DATA LOADING
 // =====================
 async function loadData() {
-  const uid = state.user.id;
+  const uid = state.userId;
+  if (!uid) return;
   const [r1, r2, r3, r4, r5, r6] = await Promise.all([
     sb.from("transactions")  .select("*").eq("user_id", uid).order("created_at", { ascending: false }),
     sb.from("categories")    .select("*").eq("user_id", uid).order("name"),
@@ -164,7 +181,7 @@ async function loadData() {
     sb.from("banks")         .select("*").eq("user_id", uid).order("created_at"),
   ]);
   state.transactions = r1.data || [];
-  state.categories   = (r2.data || []).map(x => x.name);
+  state.categories   = (r2.data || []).map(x => ({ id: x.id, name: x.name }));
   state.goals        = r3.data || [];
   state.cards        = r4.data || [];
   state.fixed        = r5.data || [];
@@ -223,7 +240,6 @@ function renderDashboard() {
   const fixedTotal = state.fixed.reduce((s, f) => s + parseFloat(f.amount), 0);
   const totalBankBalance = state.banks.reduce((s, b) => s + bankBalance(b), 0);
 
-  // Gráfico barras
   const months = {};
   const now = new Date();
   for (let i = 5; i >= 0; i--) {
@@ -238,7 +254,6 @@ function renderDashboard() {
   const mArr = Object.values(months);
   const maxV = Math.max(...mArr.map(m => Math.max(m.inc, m.exp)), 1);
 
-  // Categorias
   const expByCat = {};
   txs.filter(t => t.type === "despesa").forEach(t => { expByCat[t.category] = (expByCat[t.category] || 0) + parseFloat(t.amount); });
   const pieItems = Object.entries(expByCat).sort((a, b) => b[1] - a[1]).slice(0, 6);
@@ -274,8 +289,8 @@ function renderDashboard() {
           <div style="display:flex;align-items:flex-end;gap:4px;height:100px;margin-bottom:6px">
             ${mArr.map(m => `
               <div style="flex:1;display:flex;gap:2px;align-items:flex-end">
-                <div style="flex:1;background:#1D9E75;border-radius:3px 3px 0 0;height:${Math.round((m.inc / maxV) * 95)}px;min-height:2px"></div>
-                <div style="flex:1;background:#D85A30;border-radius:3px 3px 0 0;height:${Math.round((m.exp / maxV) * 95)}px;min-height:2px"></div>
+                <div style="flex:1;background:#1D9E75;border-radius:3px 3px 0 0;height:${Math.round((m.inc/maxV)*95)}px;min-height:2px"></div>
+                <div style="flex:1;background:#D85A30;border-radius:3px 3px 0 0;height:${Math.round((m.exp/maxV)*95)}px;min-height:2px"></div>
               </div>`).join("")}
           </div>
           <div style="display:flex;justify-content:space-around;margin-bottom:8px">
@@ -296,10 +311,10 @@ function renderDashboard() {
               <div>
                 <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
                   <span style="color:#9a9db0">${name || "Sem categoria"}</span>
-                  <span style="color:#e8e8e8">${Math.round((val / pieTotal) * 100)}%</span>
+                  <span style="color:#e8e8e8">${Math.round((val/pieTotal)*100)}%</span>
                 </div>
                 <div style="height:5px;background:#1e2030;border-radius:99px;overflow:hidden">
-                  <div style="height:100%;width:${Math.round((val / pieTotal) * 100)}%;background:${CAT_COLORS[i % CAT_COLORS.length]};border-radius:99px"></div>
+                  <div style="height:100%;width:${Math.round((val/pieTotal)*100)}%;background:${CAT_COLORS[i%CAT_COLORS.length]};border-radius:99px"></div>
                 </div>
               </div>`).join("")}
           </div>
@@ -321,7 +336,7 @@ function renderDashboard() {
 // LANÇAMENTOS
 // =====================
 function renderLancamentos() {
-  const catOptions  = state.categories.map(c => `<option value="${c}">${c}</option>`).join("");
+  const catOptions  = state.categories.map(c => `<option value="${c.name}">${c.name}</option>`).join("");
   const cardOptions = state.cards.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
   const bankOptions = state.banks.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
 
@@ -330,17 +345,23 @@ function renderLancamentos() {
       <div class="section-title">Lançar Movimento</div>
       <div class="form-grid">
         <div class="form-group">
-          <label>Tipo</label>
-          <select id="f-type" onchange="onTxTypeChange()">
+          <label>Tipo *</label>
+          <select id="f-type" onchange="onTxTypeChange()" required>
             <option value="despesa">Despesa</option>
             <option value="receita">Receita</option>
           </select>
         </div>
-        <div class="form-group"><label>Descrição</label><input id="f-desc" placeholder="Ex: Supermercado"></div>
-        <div class="form-group"><label>Data</label><input id="f-date" type="date" value="${today()}"></div>
         <div class="form-group">
-          <label>Valor (R$)</label>
-          <input id="f-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+          <label>Descrição *</label>
+          <input id="f-desc" placeholder="Ex: Supermercado" required>
+        </div>
+        <div class="form-group">
+          <label>Data *</label>
+          <input id="f-date" type="date" value="${today()}" required>
+        </div>
+        <div class="form-group">
+          <label>Valor (R$) *</label>
+          <input id="f-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)" required>
         </div>
         <div class="form-group">
           <label>Categoria</label>
@@ -365,6 +386,10 @@ function renderLancamentos() {
             <option value="">-- nenhum --</option>${cardOptions}
           </select>
         </div>
+        <div class="form-group" id="f-installments-group" style="display:none">
+          <label>Número de parcelas *</label>
+          <input id="f-installments" type="text" inputmode="numeric" placeholder="Ex: 3" oninput="this.value=this.value.replace(/\D/g,'')">
+        </div>
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" onclick="saveTx()">Salvar</button>
@@ -379,22 +404,22 @@ function renderLancamentos() {
   `;
 }
 
-// Quando seleciona banco → tipo vira receita e bloqueia cartão
+// Quando seleciona banco → tipo vira receita, bloqueia cartão e parcelas
 function onBankChange() {
   const bankId = document.getElementById("f-bank").value;
   const typeEl = document.getElementById("f-type");
   const cardGroup = document.getElementById("f-card-group");
   const methodGroup = document.getElementById("f-method-group");
-
+  const installGroup = document.getElementById("f-installments-group");
   if (bankId) {
     typeEl.value = "receita";
     typeEl.disabled = true;
-    // Limpa e desabilita cartão
     document.getElementById("f-card").value = "";
     cardGroup.style.opacity = "0.35";
     cardGroup.style.pointerEvents = "none";
     methodGroup.style.opacity = "0.35";
     methodGroup.style.pointerEvents = "none";
+    installGroup.style.display = "none";
   } else {
     typeEl.disabled = false;
     cardGroup.style.opacity = "";
@@ -404,23 +429,23 @@ function onBankChange() {
   }
 }
 
-// Quando seleciona cartão → limpa banco, só permite crédito ou débito
+// Quando seleciona cartão → limpa banco, mostra parcelas, filtra métodos
 function onCardChange() {
   const cardId = document.getElementById("f-card").value;
   const bankEl = document.getElementById("f-bank");
   const methodEl = document.getElementById("f-method");
   const bankGroup = bankEl.closest(".form-group");
-
+  const installGroup = document.getElementById("f-installments-group");
   if (cardId) {
     bankEl.value = "";
     bankGroup.style.opacity = "0.35";
     bankGroup.style.pointerEvents = "none";
-    // Filtra método para só crédito/débito
     methodEl.innerHTML = `
       <option value="">-- selecione --</option>
       <option value="Cartão de crédito">Cartão de crédito</option>
       <option value="Cartão de débito">Cartão de débito</option>
     `;
+    installGroup.style.display = "flex";
   } else {
     bankGroup.style.opacity = "";
     bankGroup.style.pointerEvents = "";
@@ -428,16 +453,13 @@ function onCardChange() {
       <option value="">-- automático --</option>
       ${METHODS.map(m => `<option>${m}</option>`).join("")}
     `;
+    installGroup.style.display = "none";
   }
 }
 
 function onTxTypeChange() {
-  // Se banco estava selecionado e mudou tipo, limpa banco
   const bankEl = document.getElementById("f-bank");
-  if (bankEl && bankEl.value) {
-    bankEl.value = "";
-    onBankChange();
-  }
+  if (bankEl && bankEl.value) { bankEl.value = ""; onBankChange(); }
 }
 
 // =====================
@@ -445,7 +467,6 @@ function onTxTypeChange() {
 // =====================
 function renderMovimentacoes() {
   const months = [...new Set(state.transactions.map(t => monthKey(t.date)))];
-
   let txs = state.transactions;
   if (state.filterMonth) txs = txs.filter(t => monthKey(t.date) === state.filterMonth);
   if (state.filterCat)   txs = txs.filter(t => t.category === state.filterCat);
@@ -459,30 +480,28 @@ function renderMovimentacoes() {
     <div class="filters">
       <select onchange="state.filterMonth=this.value;render()">
         <option value="">Todos os meses</option>
-        ${months.map(m => `<option value="${m}" ${state.filterMonth === m ? "selected" : ""}>${m}</option>`).join("")}
+        ${months.map(m => `<option value="${m}" ${state.filterMonth===m?"selected":""}>${m}</option>`).join("")}
       </select>
       <select onchange="state.filterCat=this.value;render()">
         <option value="">Todas as categorias</option>
-        ${state.categories.map(c => `<option value="${c}" ${state.filterCat === c ? "selected" : ""}>${c}</option>`).join("")}
+        ${state.categories.map(c => `<option value="${c.name}" ${state.filterCat===c.name?"selected":""}>${c.name}</option>`).join("")}
       </select>
       <select onchange="state.filterBank=this.value;render()">
         <option value="">Todos os bancos</option>
-        ${state.banks.map(b => `<option value="${b.id}" ${String(state.filterBank) === String(b.id) ? "selected" : ""}>${b.name}</option>`).join("")}
+        ${state.banks.map(b => `<option value="${b.id}" ${String(state.filterBank)===String(b.id)?"selected":""}>${b.name}</option>`).join("")}
       </select>
       <select onchange="state.filterCard=this.value;render()">
         <option value="">Todos os cartões</option>
-        ${state.cards.map(c => `<option value="${c.id}" ${String(state.filterCard) === String(c.id) ? "selected" : ""}>${c.name}</option>`).join("")}
+        ${state.cards.map(c => `<option value="${c.id}" ${String(state.filterCard)===String(c.id)?"selected":""}>${c.name}</option>`).join("")}
       </select>
     </div>
-
     <div class="summary-cards">
       <div class="s-card"><div class="s-label">Receitas</div><div class="s-value green" style="font-size:18px">${fmt(inc)}</div></div>
       <div class="s-card"><div class="s-label">Gastos</div><div class="s-value red" style="font-size:18px">${fmt(exp)}</div></div>
-      <div class="s-card"><div class="s-label">Saldo</div><div class="s-value ${inc - exp >= 0 ? "green" : "red"}" style="font-size:18px">${fmt(inc - exp)}</div></div>
+      <div class="s-card"><div class="s-label">Saldo</div><div class="s-value ${inc-exp>=0?"green":"red"}" style="font-size:18px">${fmt(inc-exp)}</div></div>
     </div>
-
     <div class="section">
-      <div class="section-title">${txs.length} lançamento${txs.length !== 1 ? "s" : ""}</div>
+      <div class="section-title">${txs.length} lançamento${txs.length!==1?"s":""}</div>
       ${txs.map(tx => txRow(tx)).join("") || `<div class="empty">Nenhuma transação encontrada</div>`}
     </div>
   `;
@@ -493,13 +512,18 @@ function renderMovimentacoes() {
 // =====================
 function renderBancos() {
   const totalBalance = state.banks.reduce((s, b) => s + bankBalance(b), 0);
-
   document.getElementById("content").innerHTML = `
     <div class="section">
       <div class="section-title">Novo Banco / Conta</div>
       <div class="form-grid">
-        <div class="form-group"><label>Nome</label><input id="b-name" placeholder="Ex: Nubank, Itaú, Carteira..."></div>
-        <div class="form-group"><label>Saldo inicial (R$)</label><input id="b-balance" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)"></div>
+        <div class="form-group">
+          <label>Nome *</label>
+          <input id="b-name" placeholder="Ex: Nubank, Itaú, Carteira...">
+        </div>
+        <div class="form-group">
+          <label>Saldo inicial (R$)</label>
+          <input id="b-balance" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+        </div>
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" onclick="saveBank()">Salvar Banco</button>
@@ -511,14 +535,14 @@ function renderBancos() {
       <div class="section">
         <div class="section-title">
           Saldo total em bancos
-          <span class="s-value ${totalBalance >= 0 ? "green" : "red"}" style="font-size:16px">${fmt(totalBalance)}</span>
+          <span class="s-value ${totalBalance>=0?"green":"red"}" style="font-size:16px">${fmt(totalBalance)}</span>
         </div>
         <div class="bank-grid">
           ${state.banks.map(b => {
-            const bal  = bankBalance(b);
-            const txs  = state.transactions.filter(t => t.bank_id === b.id);
-            const inc  = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
-            const exp  = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
+            const bal = bankBalance(b);
+            const txs = state.transactions.filter(t => t.bank_id === b.id);
+            const inc = txs.filter(t => t.type==="receita").reduce((s,t) => s+parseFloat(t.amount), 0);
+            const exp = txs.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
             return `
               <div class="bank-card">
                 <div class="bank-card-header">
@@ -526,10 +550,8 @@ function renderBancos() {
                   <button class="btn-icon" onclick="deleteBank(${b.id})">✕</button>
                 </div>
                 <div class="bank-card-label">Saldo atual</div>
-                <div class="bank-card-balance ${bal >= 0 ? "green" : "red"}">${fmt(bal)}</div>
-                <div class="bank-card-sub">
-                  Inicial: ${fmt(b.initial_balance)} · +${fmt(inc)} / -${fmt(exp)}
-                </div>
+                <div class="bank-card-balance ${bal>=0?"green":"red"}">${fmt(bal)}</div>
+                <div class="bank-card-sub">Inicial: ${fmt(b.initial_balance)} · +${fmt(inc)} / -${fmt(exp)}</div>
                 <div style="margin-top:12px;display:flex;gap:6px">
                   <button class="btn btn-secondary btn-sm" onclick="quickDeposit(${b.id})">+ Depósito</button>
                   <button class="btn btn-secondary btn-sm" onclick="state.filterBank='${b.id}';goTo('movimentacoes')">Ver movimentos</button>
@@ -539,9 +561,7 @@ function renderBancos() {
           }).join("")}
         </div>
       </div>
-    ` : ""}
-
-    ${state.banks.length === 0 ? `<div class="empty" style="padding:3rem">Nenhum banco cadastrado ainda.</div>` : ""}
+    ` : `<div class="empty" style="padding:3rem">Nenhum banco cadastrado ainda.</div>`}
   `;
 }
 
@@ -553,9 +573,12 @@ function renderCartoes() {
     <div class="section">
       <div class="section-title">Novo Cartão</div>
       <div class="form-grid">
-        <div class="form-group"><label>Nome</label><input id="c-name" placeholder="Ex: Nubank Crédito"></div>
         <div class="form-group">
-          <label>Tipo</label>
+          <label>Nome *</label>
+          <input id="c-name" placeholder="Ex: Nubank Crédito">
+        </div>
+        <div class="form-group">
+          <label>Tipo *</label>
           <select id="c-type">
             <option value="credito">Crédito</option>
             <option value="debito">Débito</option>
@@ -563,9 +586,25 @@ function renderCartoes() {
             <option value="dinheiro">Dinheiro</option>
           </select>
         </div>
-        <div class="form-group"><label>Limite (R$)</label><input id="c-limit" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)"></div>
-        <div class="form-group"><label>Fechamento (dia)</label><input id="c-closing" type="number" min="1" max="31" placeholder="Ex: 20"></div>
-        <div class="form-group"><label>Vencimento (dia)</label><input id="c-due" type="number" min="1" max="31" placeholder="Ex: 5"></div>
+        <div class="form-group">
+          <label>Cor do cartão</label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="color" id="c-color" value="#7F77DD" style="width:40px;height:36px;padding:2px;border-radius:8px;border:1px solid #2a2d3a;background:#0f1117;cursor:pointer">
+            <span id="c-color-label" style="font-size:12px;color:#666">#7F77DD</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Limite (R$)</label>
+          <input id="c-limit" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+        </div>
+        <div class="form-group">
+          <label>Fechamento (dia) *</label>
+          <input id="c-closing" type="text" inputmode="numeric" placeholder="Ex: 28" oninput="this.value=this.value.replace(/\D/g,'')">
+        </div>
+        <div class="form-group">
+          <label>Vencimento (dia) *</label>
+          <input id="c-due" type="text" inputmode="numeric" placeholder="Ex: 5" oninput="this.value=this.value.replace(/\D/g,'')">
+        </div>
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" onclick="saveCard()">Salvar Cartão</button>
@@ -578,9 +617,13 @@ function renderCartoes() {
       ${state.cards.length ? `
         <div class="cards-grid">
           ${state.cards.map(c => `
-            <div class="card-item">
+            <div class="card-item" style="border-left:4px solid ${c.color || "#7F77DD"}">
               <div>
-                <div class="card-name">${c.name}<span class="card-type-badge">${c.type}</span></div>
+                <div class="card-name">
+                  <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c.color || "#7F77DD"};margin-right:6px"></span>
+                  ${c.name}
+                  <span class="card-type-badge">${c.type}</span>
+                </div>
                 <div class="card-detail">
                   ${c.limit_amount > 0 ? "Limite: " + fmt(c.limit_amount) : "Sem limite"}
                   ${c.closing_day ? " · Fecha dia " + c.closing_day : ""}
@@ -594,22 +637,38 @@ function renderCartoes() {
       ` : `<div class="empty">Nenhum cartão cadastrado</div>`}
     </div>
   `;
+
+  // Atualiza label de cor ao mover o color picker
+  const colorInput = document.getElementById("c-color");
+  const colorLabel = document.getElementById("c-color-label");
+  if (colorInput && colorLabel) {
+    colorInput.addEventListener("input", () => { colorLabel.textContent = colorInput.value; });
+  }
 }
 
 // =====================
 // CONTAS FIXAS
 // =====================
 function renderContasFixas() {
-  const catOptions = state.categories.map(c => `<option value="${c}">${c}</option>`).join("");
+  const catOptions = state.categories.map(c => `<option value="${c.name}">${c.name}</option>`).join("");
   const total      = state.fixed.reduce((s, f) => s + parseFloat(f.amount), 0);
 
   document.getElementById("content").innerHTML = `
     <div class="section">
       <div class="section-title">Nova Conta Fixa</div>
       <div class="form-grid">
-        <div class="form-group"><label>Descrição</label><input id="fx-desc" placeholder="Ex: Aluguel"></div>
-        <div class="form-group"><label>Valor (R$)</label><input id="fx-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)"></div>
-        <div class="form-group"><label>Vencimento (dia)</label><input id="fx-due" type="number" min="1" max="31" placeholder="Ex: 10"></div>
+        <div class="form-group">
+          <label>Descrição *</label>
+          <input id="fx-desc" placeholder="Ex: Aluguel">
+        </div>
+        <div class="form-group">
+          <label>Valor (R$) *</label>
+          <input id="fx-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+        </div>
+        <div class="form-group">
+          <label>Vencimento (dia) *</label>
+          <input id="fx-due" type="text" inputmode="numeric" placeholder="Ex: 10" oninput="this.value=this.value.replace(/\D/g,'')">
+        </div>
         <div class="form-group">
           <label>Categoria</label>
           <select id="fx-cat"><option value="">-- nenhuma --</option>${catOptions}</select>
@@ -658,13 +717,18 @@ function renderContasFixas() {
 // =====================
 function renderMetas() {
   const bankOptions = state.banks.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
-
   document.getElementById("content").innerHTML = `
     <div class="section">
       <div class="section-title">Nova Meta</div>
       <div class="form-grid">
-        <div class="form-group"><label>Nome</label><input id="g-name" placeholder="Ex: Viagem para SP"></div>
-        <div class="form-group"><label>Valor alvo (R$)</label><input id="g-target" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)"></div>
+        <div class="form-group">
+          <label>Nome *</label>
+          <input id="g-name" placeholder="Ex: Viagem para SP">
+        </div>
+        <div class="form-group">
+          <label>Valor alvo (R$) *</label>
+          <input id="g-target" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+        </div>
         <div class="form-group">
           <label>Banco vinculado (opcional)</label>
           <select id="g-bank"><option value="">-- nenhum --</option>${bankOptions}</select>
@@ -679,7 +743,7 @@ function renderMetas() {
     <div class="section">
       <div class="section-title">Minhas Metas</div>
       ${state.goals.length ? state.goals.map(g => {
-        const pct  = Math.min(100, Math.round((parseFloat(g.saved) / parseFloat(g.target)) * 100));
+        const pct  = Math.min(100, Math.round((parseFloat(g.saved)/parseFloat(g.target))*100));
         const bank = state.banks.find(b => b.id === g.bank_id);
         return `
           <div style="padding:14px 0;border-bottom:1px solid #1e2030">
@@ -691,12 +755,12 @@ function renderMetas() {
               <span style="font-size:12px;color:#666">${pct}% · ${fmt(g.saved)} de ${fmt(g.target)}</span>
             </div>
             <div style="height:7px;background:#1e2030;border-radius:99px;overflow:hidden;margin-bottom:10px">
-              <div style="height:100%;width:${pct}%;background:${pct >= 100 ? "#1D9E75" : "#7F77DD"};border-radius:99px;transition:width .4s"></div>
+              <div style="height:100%;width:${pct}%;background:${pct>=100?"#1D9E75":"#7F77DD"};border-radius:99px;transition:width .4s"></div>
             </div>
             <div style="display:flex;gap:8px;justify-content:flex-end">
               ${pct < 100
                 ? `<button class="btn btn-secondary btn-sm" onclick="promptDeposit(${g.id})">+ Depositar</button>`
-                : `<span style="color:#1D9E75;font-size:12px;font-weight:500">✓ Concluída!</span>`
+                : `<span style="color:#1D9E75;font-size:12px;font-weight:500">Concluída!</span>`
               }
               <button class="btn btn-danger btn-sm" onclick="deleteGoal(${g.id})">Excluir</button>
             </div>
@@ -715,7 +779,10 @@ function renderCategorias() {
     <div class="section">
       <div class="section-title">Nova Categoria</div>
       <div class="form-grid">
-        <div class="form-group"><label>Nome</label><input id="cat-name" placeholder="Ex: Academia"></div>
+        <div class="form-group">
+          <label>Nome *</label>
+          <input id="cat-name" placeholder="Ex: Academia">
+        </div>
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" onclick="saveCategory()">Salvar</button>
@@ -723,15 +790,15 @@ function renderCategorias() {
     </div>
 
     <div class="section">
-      <div class="section-title">Categorias</div>
+      <div class="section-title">Categorias (${state.categories.length})</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">
         ${state.categories.map((cat, i) => `
           <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:#0f1117;border:1px solid #2a2d3a;border-radius:8px">
             <div style="display:flex;align-items:center;gap:8px">
-              <div style="width:9px;height:9px;border-radius:50%;background:${CAT_COLORS[i % CAT_COLORS.length]}"></div>
-              <span style="font-size:13px">${cat}</span>
+              <div style="width:9px;height:9px;border-radius:50%;background:${CAT_COLORS[i%CAT_COLORS.length]};flex-shrink:0"></div>
+              <span style="font-size:13px">${cat.name}</span>
             </div>
-            <button class="btn-icon" onclick="deleteCategory('${cat}')">✕</button>
+            <button class="btn-icon" onclick="deleteCategory(${cat.id})">✕</button>
           </div>
         `).join("")}
       </div>
@@ -745,21 +812,25 @@ function renderCategorias() {
 function txRow(tx) {
   const card = state.cards.find(c => c.id === tx.card_id);
   const bank = state.banks.find(b => b.id === tx.bank_id);
+  const installInfo = tx.installment_total > 1
+    ? `<span class="badge badge-method">${tx.installment_number}/${tx.installment_total}x</span>`
+    : "";
   return `
     <div class="tx-row">
-      <div class="tx-icon ${tx.type === "receita" ? "inc" : "exp"}">${tx.type === "receita" ? "↑" : "↓"}</div>
+      <div class="tx-icon ${tx.type==="receita"?"inc":"exp"}">${tx.type==="receita"?"↑":"↓"}</div>
       <div class="tx-info">
         <div class="tx-name">${tx.description}</div>
         <div class="tx-sub">
           ${new Date(tx.date).toLocaleDateString("pt-BR")}
           ${tx.category       ? `<span class="badge badge-cat">${tx.category}</span>`          : ""}
-          ${bank              ? `<span class="badge badge-bank">${bank.name}</span>`         : ""}
+          ${bank              ? `<span class="badge badge-bank">${bank.name}</span>`            : ""}
           ${tx.payment_method ? `<span class="badge badge-method">${tx.payment_method}</span>` : ""}
-          ${card              ? `<span class="badge badge-method">${card.name}</span>`       : ""}
+          ${card              ? `<span class="badge badge-method" style="border-left:3px solid ${card.color||"#7F77DD"};padding-left:6px">${card.name}</span>` : ""}
+          ${installInfo}
         </div>
       </div>
-      <span class="tx-amount ${tx.type === "receita" ? "green" : "red"}">
-        ${tx.type === "receita" ? "+" : "-"}${fmt(tx.amount)}
+      <span class="tx-amount ${tx.type==="receita"?"green":"red"}">
+        ${tx.type==="receita"?"+":"-"}${fmt(tx.amount)}
       </span>
       <button class="btn-icon" onclick="deleteTx(${tx.id})">✕</button>
     </div>
@@ -770,7 +841,7 @@ function txRow(tx) {
 // ACTIONS — TRANSACTIONS
 // =====================
 async function saveTx() {
-  const uid            = state.user.id;
+  const uid            = state.userId;
   const type           = document.getElementById("f-type").value;
   const description    = document.getElementById("f-desc").value.trim();
   const amount         = parseCurrency(document.getElementById("f-amount").value);
@@ -779,17 +850,61 @@ async function saveTx() {
   const bank_id        = document.getElementById("f-bank").value   || null;
   const payment_method = document.getElementById("f-method").value || null;
   const card_id        = document.getElementById("f-card").value   || null;
+  const installments   = parseInt(document.getElementById("f-installments")?.value) || 1;
 
-  if (!description || !amount || !date) return alert("Preencha descrição, valor e data.");
+  if (!uid)          return alert("Sessão expirada. Faça login novamente.");
+  if (!description)  return alert("Informe a descrição.");
+  if (!amount)       return alert("Informe o valor.");
+  if (!date)         return alert("Informe a data.");
 
+  // Se tem cartão com múltiplas parcelas
+  if (card_id && installments > 1) {
+    const card = state.cards.find(c => c.id === parseInt(card_id));
+    if (!card || !card.closing_day || !card.due_day) {
+      return alert("Para parcelar, o cartão precisa ter dia de fechamento e vencimento cadastrados.");
+    }
+
+    const amountPerInstallment = amount / installments;
+    const rows = [];
+    let firstDate = calcFirstInstallmentDate(date, card.closing_day, card.due_day);
+
+    for (let i = 0; i < installments; i++) {
+      const installDate = addMonths(firstDate, i);
+      rows.push({
+        user_id: uid, type, description: `${description} (${i+1}/${installments})`,
+        amount: parseFloat(amountPerInstallment.toFixed(2)),
+        category, date: installDate, payment_method: payment_method || "Cartão de crédito",
+        bank_id: null, card_id: parseInt(card_id),
+        installment_number: i + 1, installment_total: installments,
+      });
+    }
+
+    const { data, error } = await sb.from("transactions").insert(rows).select();
+    if (!error && data) {
+      data.forEach(d => state.transactions.unshift(d));
+      state.transactions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      render();
+    } else if (error) alert("Erro ao salvar parcelas: " + error.message);
+    return;
+  }
+
+  // Lançamento único
   const { data, error } = await sb.from("transactions").insert([{
     user_id: uid, type, description, amount, category, date, payment_method,
     bank_id:  bank_id  ? parseInt(bank_id)  : null,
     card_id:  card_id  ? parseInt(card_id)  : null,
+    installment_number: 1, installment_total: 1,
   }]).select().single();
 
   if (!error && data) { state.transactions.unshift(data); render(); }
   else if (error) alert("Erro: " + error.message);
+}
+
+// Adiciona N meses a uma data ISO
+function addMonths(dateStr, months) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().split("T")[0];
 }
 
 function clearTxForm() {
@@ -810,13 +925,16 @@ async function deleteTx(id) {
 // ACTIONS — BANKS
 // =====================
 async function saveBank() {
+  const uid             = state.userId;
   const name            = document.getElementById("b-name").value.trim();
   const initial_balance = parseCurrency(document.getElementById("b-balance").value) || 0;
 
-  if (!name) return alert("Informe o nome do banco.");
+  if (!uid)   return alert("Sessão expirada. Faça login novamente.");
+  if (!name)  return alert("Informe o nome do banco.");
 
-  const { data, error } = await sb.from("banks").insert([{ name, initial_balance, user_id: state.user.id }]).select().single();
+  const { data, error } = await sb.from("banks").insert([{ name, initial_balance, user_id: uid }]).select().single();
   if (!error && data) { state.banks.push(data); render(); }
+  else if (error) alert("Erro ao salvar banco: " + error.message);
 }
 
 function clearBankForm() {
@@ -825,28 +943,21 @@ function clearBankForm() {
 }
 
 async function deleteBank(id) {
-  await sb.from("banks").delete().eq("id", id);
-  state.banks = state.banks.filter(b => b.id !== id);
-  render();
+  const { error } = await sb.from("banks").delete().eq("id", id).eq("user_id", state.userId);
+  if (!error) { state.banks = state.banks.filter(b => b.id !== id); render(); }
+  else alert("Erro ao excluir banco: " + error.message);
 }
 
 async function quickDeposit(bankId) {
   const amtStr = prompt("Valor do depósito (R$):\nExemplo: 150,00");
   const amount = parseCurrency(amtStr);
   if (!amount || isNaN(amount)) return;
-
-  const desc = prompt("Descrição (ex: Salário, Transferência):", "Depósito") || "Depósito";
-
+  const desc = prompt("Descrição:", "Depósito") || "Depósito";
   const { data, error } = await sb.from("transactions").insert([{
-    user_id:     state.user.id,
-    type:        "receita",
-    description: desc,
-    amount,
-    date:        today(),
-    bank_id:     bankId,
-    category:    null,
+    user_id: state.userId, type: "receita", description: desc,
+    amount, date: today(), bank_id: bankId, category: null,
+    installment_number: 1, installment_total: 1,
   }]).select().single();
-
   if (!error && data) { state.transactions.unshift(data); render(); }
 }
 
@@ -854,40 +965,51 @@ async function quickDeposit(bankId) {
 // ACTIONS — CARDS
 // =====================
 async function saveCard() {
+  const uid          = state.userId;
   const name         = document.getElementById("c-name").value.trim();
   const type         = document.getElementById("c-type").value;
+  const color        = document.getElementById("c-color").value;
   const limit_amount = parseCurrency(document.getElementById("c-limit").value) || 0;
-  const closing_day  = parseInt(document.getElementById("c-closing").value)   || null;
-  const due_day      = parseInt(document.getElementById("c-due").value)       || null;
+  const closing_day  = parseInt(document.getElementById("c-closing").value) || null;
+  const due_day      = parseInt(document.getElementById("c-due").value)     || null;
 
-  if (!name) return alert("Informe o nome do cartão.");
+  if (!uid)          return alert("Sessão expirada. Faça login novamente.");
+  if (!name)         return alert("Informe o nome do cartão.");
+  if (!closing_day)  return alert("Informe o dia de fechamento.");
+  if (!due_day)      return alert("Informe o dia de vencimento.");
 
-  const { data, error } = await sb.from("cards").insert([{ name, type, limit_amount, closing_day, due_day, user_id: state.user.id }]).select().single();
+  const { data, error } = await sb.from("cards").insert([{ name, type, color, limit_amount, closing_day, due_day, user_id: uid }]).select().single();
   if (!error && data) { state.cards.push(data); render(); }
+  else if (error) alert("Erro ao salvar cartão: " + error.message);
 }
 
 function clearCardForm() { document.getElementById("c-name").value = ""; }
 
 async function deleteCard(id) {
-  await sb.from("cards").delete().eq("id", id);
-  state.cards = state.cards.filter(c => c.id !== id);
-  render();
+  const { error } = await sb.from("cards").delete().eq("id", id).eq("user_id", state.userId);
+  if (!error) { state.cards = state.cards.filter(c => c.id !== id); render(); }
+  else alert("Erro ao excluir cartão: " + error.message);
 }
 
 // =====================
 // ACTIONS — FIXED
 // =====================
 async function saveFixed() {
+  const uid            = state.userId;
   const description    = document.getElementById("fx-desc").value.trim();
   const amount         = parseCurrency(document.getElementById("fx-amount").value);
-  const due_day        = parseInt(document.getElementById("fx-due").value)    || 1;
+  const due_day        = parseInt(document.getElementById("fx-due").value) || null;
   const category       = document.getElementById("fx-cat").value    || null;
   const payment_method = document.getElementById("fx-method").value || null;
 
-  if (!description || !amount) return alert("Preencha descrição e valor.");
+  if (!uid)          return alert("Sessão expirada. Faça login novamente.");
+  if (!description)  return alert("Informe a descrição.");
+  if (!amount)       return alert("Informe o valor.");
+  if (!due_day)      return alert("Informe o dia de vencimento.");
 
-  const { data, error } = await sb.from("fixed_expenses").insert([{ description, amount, due_day, category, payment_method, user_id: state.user.id }]).select().single();
+  const { data, error } = await sb.from("fixed_expenses").insert([{ description, amount, due_day, category, payment_method, user_id: uid }]).select().single();
   if (!error && data) { state.fixed.push(data); render(); }
+  else if (error) alert("Erro ao salvar conta fixa: " + error.message);
 }
 
 function clearFixedForm() {
@@ -895,28 +1017,30 @@ function clearFixedForm() {
 }
 
 async function deleteFixed(id) {
-  await sb.from("fixed_expenses").delete().eq("id", id);
-  state.fixed = state.fixed.filter(f => f.id !== id);
-  render();
+  const { error } = await sb.from("fixed_expenses").delete().eq("id", id).eq("user_id", state.userId);
+  if (!error) { state.fixed = state.fixed.filter(f => f.id !== id); render(); }
+  else alert("Erro ao excluir conta fixa: " + error.message);
 }
 
 // =====================
 // ACTIONS — GOALS
 // =====================
 async function saveGoal() {
+  const uid     = state.userId;
   const name    = document.getElementById("g-name").value.trim();
   const target  = parseCurrency(document.getElementById("g-target").value);
   const bank_id = document.getElementById("g-bank").value || null;
 
-  if (!name || !target) return alert("Preencha nome e valor alvo.");
+  if (!uid)    return alert("Sessão expirada. Faça login novamente.");
+  if (!name)   return alert("Informe o nome da meta.");
+  if (!target) return alert("Informe o valor alvo.");
 
   const { data, error } = await sb.from("goals").insert([{
-    name, target, saved: 0,
-    user_id: state.user.id,
+    name, target, saved: 0, user_id: uid,
     bank_id: bank_id ? parseInt(bank_id) : null,
   }]).select().single();
-
   if (!error && data) { state.goals.push(data); render(); }
+  else if (error) alert("Erro ao salvar meta: " + error.message);
 }
 
 function clearGoalForm() {
@@ -924,71 +1048,67 @@ function clearGoalForm() {
 }
 
 async function deleteGoal(id) {
-  await sb.from("goals").delete().eq("id", id);
-  state.goals = state.goals.filter(g => g.id !== id);
-  render();
+  const { error } = await sb.from("goals").delete().eq("id", id).eq("user_id", state.userId);
+  if (!error) { state.goals = state.goals.filter(g => g.id !== id); render(); }
+  else alert("Erro ao excluir meta: " + error.message);
 }
 
 async function promptDeposit(id) {
-  const goal    = state.goals.find(g => g.id === id);
-  const amtStr  = prompt("Quanto você guardou? (R$)\nExemplo: 150,00");
-  const amount  = parseCurrency(amtStr);
+  const goal   = state.goals.find(g => g.id === id);
+  const amtStr = prompt("Quanto você guardou? (R$)\nExemplo: 150,00");
+  const amount = parseCurrency(amtStr);
   if (!amount || isNaN(amount)) return;
 
   const newSaved = Math.min(parseFloat(goal.target), parseFloat(goal.saved) + amount);
-
-  // Atualizar meta
-  await sb.from("goals").update({ saved: newSaved }).eq("id", id);
+  const { error } = await sb.from("goals").update({ saved: newSaved }).eq("id", id).eq("user_id", state.userId);
+  if (error) { alert("Erro ao atualizar meta: " + error.message); return; }
   goal.saved = newSaved;
 
-  // Se a meta tem banco vinculado, registrar como receita no banco
   if (goal.bank_id) {
-    const bank = state.banks.find(b => b.id === goal.bank_id);
     const { data } = await sb.from("transactions").insert([{
-      user_id:     state.user.id,
-      type:        "receita",
+      user_id: state.userId, type: "receita",
       description: `Depósito na meta: ${goal.name}`,
-      amount,
-      date:        today(),
-      bank_id:     goal.bank_id,
-      category:    null,
+      amount, date: today(), bank_id: goal.bank_id, category: null,
+      installment_number: 1, installment_total: 1,
     }]).select().single();
     if (data) state.transactions.unshift(data);
   }
-
   render();
 }
 
 // =====================
-// ACTIONS — CATEGORIES
+// ACTIONS — CATEGORIES  FIX: deletar por ID, não por nome
 // =====================
 async function saveCategory() {
+  const uid  = state.userId;
   const name = document.getElementById("cat-name").value.trim();
-  if (!name || state.categories.includes(name)) return;
 
-  const { error } = await sb.from("categories").insert([{ name, user_id: state.user.id }]);
-  if (!error) {
-    state.categories.push(name);
-    state.categories.sort();
+  if (!uid)  return alert("Sessão expirada. Faça login novamente.");
+  if (!name) return alert("Informe o nome da categoria.");
+  if (state.categories.find(c => c.name === name)) return alert("Categoria já existe.");
+
+  const { data, error } = await sb.from("categories").insert([{ name, user_id: uid }]).select().single();
+  if (!error && data) {
+    state.categories.push({ id: data.id, name: data.name });
+    state.categories.sort((a, b) => a.name.localeCompare(b.name));
     render();
-  }
+  } else if (error) alert("Erro ao salvar categoria: " + error.message);
 }
 
-async function deleteCategory(name) {
-  await sb.from("categories").delete().eq("name", name).eq("user_id", state.user.id);
-  state.categories = state.categories.filter(c => c !== name);
-  render();
+async function deleteCategory(id) {
+  const { error } = await sb.from("categories").delete().eq("id", id).eq("user_id", state.userId);
+  if (!error) { state.categories = state.categories.filter(c => c.id !== id); render(); }
+  else alert("Erro ao excluir categoria: " + error.message);
 }
-
 
 // =====================
 // THEME
 // =====================
 function toggleTheme() {
-  const isDark = document.body.classList.toggle("light-mode");
+  const isLight = document.body.classList.toggle("light-mode");
   const btn = document.getElementById("theme-btn");
-  btn.textContent = isDark ? "Modo escuro" : "Modo claro";
-  localStorage.setItem("theme", isDark ? "light" : "dark");
+  btn.textContent = isLight ? "Modo escuro" : "Modo claro";
+  localStorage.setItem("theme", isLight ? "light" : "dark");
 }
 
 function initTheme() {
