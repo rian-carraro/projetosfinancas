@@ -65,6 +65,7 @@ const PAGES = [
   { id: "cartoes",      label: "Cartões"       },
   { id: "contas-fixas", label: "Contas Fixas"  },
   { id: "metas",        label: "Metas"         },
+  { id: "boletos",      label: "Boletos"       },
   { id: "categorias",   label: "Categorias"    },
 ];
 
@@ -110,6 +111,7 @@ let state = {
   filterCat:    "",
   filterCard:   "",
   filterBank:   "",
+  boletos:      [],
 };
 
 // =====================
@@ -221,6 +223,7 @@ function resetState() {
   state.cards        = [];
   state.fixed        = [];
   state.banks        = [];
+  state.boletos      = [];
   state.page         = "dashboard";
 }
 
@@ -231,7 +234,7 @@ async function loadData() {
   const uid = state.userId;
   if (!uid) return false;
   try {
-    const [r1, r2, r3, r4, r5, r6] = await Promise.all([
+    const [r1, r2, r3, r4, r5, r6, r7] = await Promise.all([
       sb.from("transactions")  .select("*").eq("user_id", uid).order("created_at", { ascending: false }),
       sb.from("categories")    .select("*").eq("user_id", uid).order("name"),
       sb.from("goals")         .select("*").eq("user_id", uid).order("created_at"),
@@ -245,6 +248,7 @@ async function loadData() {
     state.cards        = r4.data || [];
     state.fixed        = r5.data || [];
     state.banks        = r6.data || [];
+  state.boletos      = r7.data || [];
     return true;
   } catch (e) {
     console.error("Erro ao carregar dados:", e);
@@ -291,6 +295,7 @@ function render() {
   else if (p === "cartoes")      renderCartoes();
   else if (p === "contas-fixas") renderContasFixas();
   else if (p === "metas")        renderMetas();
+  else if (p === "boletos")      renderBoletos();
   else if (p === "categorias")   renderCategorias();
 }
 
@@ -324,7 +329,23 @@ function renderDashboard() {
   const pieItems = Object.entries(expByCat).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const pieTotal = pieItems.reduce((s, x) => s + x[1], 0) || 1;
 
-  document.getElementById("content").innerHTML = `
+  const boletosHoje    = state.boletos.filter(b => b.due_date === today());
+  const boletosVencidos = state.boletos.filter(b => b.due_date < today());
+  const alertBoletos = (boletosHoje.length || boletosVencidos.length) ? `
+    <div style="background:#2e1a0d;border:1px solid #D85A30;border-radius:12px;padding:14px 18px;margin-bottom:1.2rem;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:14px;font-weight:500;color:#D85A30">
+          ${boletosHoje.length ? `${boletosHoje.length} boleto(s) vencendo hoje` : ""}
+          ${boletosHoje.length && boletosVencidos.length ? " · " : ""}
+          ${boletosVencidos.length ? `${boletosVencidos.length} boleto(s) vencido(s)` : ""}
+        </div>
+        <div style="font-size:12px;color:#884F0B;margin-top:3px">Acesse a página de boletos para pagar</div>
+      </div>
+      <button class="btn btn-sm" style="border-color:#D85A30;color:#D85A30" onclick="goTo('boletos')">Ver boletos</button>
+    </div>
+  ` : "";
+
+  document.getElementById("content").innerHTML = alertBoletos + `
     <div class="summary-cards" style="grid-template-columns:repeat(4,1fr)">
       <div class="s-card">
         <div class="s-label">Saldo (transações)</div>
@@ -830,6 +851,178 @@ function renderMetas() {
       }).join("") : `<div class="empty">Nenhuma meta cadastrada</div>`}
     </div>
   `;
+}
+
+
+// =====================
+// BOLETOS
+// =====================
+function renderBoletos() {
+  const hoje = today();
+  const vencendoHoje  = state.boletos.filter(b => b.due_date === hoje);
+  const vencendoBreve = state.boletos.filter(b => b.due_date > hoje);
+  const vencidos      = state.boletos.filter(b => b.due_date < hoje);
+
+  document.getElementById("content").innerHTML = `
+    <div class="section">
+      <div class="section-title">Novo Boleto</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Descrição *</label>
+          <input id="bol-desc" placeholder="Ex: Conta de luz">
+        </div>
+        <div class="form-group">
+          <label>Valor (R$) *</label>
+          <input id="bol-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+        </div>
+        <div class="form-group">
+          <label>Vencimento *</label>
+          <input id="bol-date" type="date" value="${hoje}">
+        </div>
+        <div class="form-group">
+          <label>Código de barras (opcional)</label>
+          <input id="bol-barcode" placeholder="000.00000 00000.000000 00000.000000 0 00000000000000">
+        </div>
+        <div class="form-group">
+          <label>Arquivo (PDF ou imagem, opcional)</label>
+          <input id="bol-file" type="file" accept=".pdf,image/*" style="padding:6px;font-size:13px">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" onclick="saveBoleto()">Salvar Boleto</button>
+        <button class="btn btn-secondary" onclick="clearBoletoForm()">Limpar</button>
+      </div>
+    </div>
+
+    ${vencendoHoje.length ? `
+    <div class="section" style="border-color:#D85A30">
+      <div class="section-title" style="color:#D85A30">Vencendo hoje (${vencendoHoje.length})</div>
+      ${vencendoHoje.map(b => boletoRow(b, "hoje")).join("")}
+    </div>` : ""}
+
+    ${vencidos.length ? `
+    <div class="section" style="border-color:#884F0B">
+      <div class="section-title" style="color:#BA7517">Vencidos (${vencidos.length})</div>
+      ${vencidos.map(b => boletoRow(b, "vencido")).join("")}
+    </div>` : ""}
+
+    <div class="section">
+      <div class="section-title">
+        Próximos boletos
+        ${vencendoBreve.length === 0 && vencidos.length === 0 && vencendoHoje.length === 0
+          ? "" : `<span style="font-size:12px;color:#666;font-weight:400">${vencendoBreve.length} pendente(s)</span>`}
+      </div>
+      ${vencendoBreve.length
+        ? vencendoBreve.map(b => boletoRow(b, "breve")).join("")
+        : `<div class="empty">Nenhum boleto cadastrado</div>`}
+    </div>
+  `;
+}
+
+function boletoRow(b, status) {
+  const dueFormatted = new Date(b.due_date + "T00:00:00").toLocaleDateString("pt-BR");
+  const borderColor  = status === "hoje" ? "#D85A30" : status === "vencido" ? "#BA7517" : "#2a2d3a";
+  const dateColor    = status === "hoje" ? "#D85A30" : status === "vencido" ? "#BA7517" : "#555";
+
+  return `
+    <div style="display:flex;align-items:center;padding:12px 0;border-bottom:1px solid #1e2030;gap:12px">
+      <div style="width:4px;height:48px;border-radius:99px;background:${borderColor};flex-shrink:0"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:500;color:#e8e8e8">${b.description}</div>
+        <div style="font-size:12px;color:${dateColor};margin-top:3px">
+          Vence ${dueFormatted}
+          ${b.barcode ? `<span style="margin-left:8px;font-family:monospace;font-size:11px;color:#555">${b.barcode.substring(0,20)}...</span>` : ""}
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        <span style="font-size:15px;font-weight:600;color:#D85A30">${fmt(b.amount)}</span>
+        <div style="display:flex;gap:6px">
+          ${b.file_path ? `<button class="btn btn-secondary btn-sm" onclick="downloadBoleto('${b.file_path}','${b.id}')">Abrir arquivo</button>` : ""}
+          ${b.barcode ? `<button class="btn btn-secondary btn-sm" onclick="copyBarcode('${b.barcode}')">Copiar código</button>` : ""}
+          <button class="btn btn-primary btn-sm" onclick="markBoletoAsPaid(${b.id})">Pago</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function saveBoleto() {
+  const uid         = state.userId;
+  const description = document.getElementById("bol-desc").value.trim();
+  const amount      = parseCurrency(document.getElementById("bol-amount").value);
+  const due_date    = document.getElementById("bol-date").value;
+  const barcode     = document.getElementById("bol-barcode").value.trim() || null;
+  const fileInput   = document.getElementById("bol-file");
+  const file        = fileInput?.files?.[0] || null;
+
+  if (!uid)          return alert("Sessão expirada.");
+  if (!description)  return alert("Informe a descrição.");
+  if (!amount)       return alert("Informe o valor.");
+  if (!due_date)     return alert("Informe a data de vencimento.");
+
+  let file_path = null;
+  let file_type = null;
+
+  // Upload do arquivo se tiver
+  if (file) {
+    const ext      = file.name.split(".").pop();
+    const path     = `${uid}/${Date.now()}.${ext}`;
+    const { error: uploadError } = await sb.storage.from("boletos").upload(path, file, { contentType: file.type });
+    if (uploadError) return alert("Erro ao enviar arquivo: " + uploadError.message);
+    file_path = path;
+    file_type = file.type;
+  }
+
+  const { data, error } = await sb.from("boletos").insert([{
+    user_id: uid, description, amount, due_date, barcode, file_path, file_type, paid: false
+  }]).select().single();
+
+  if (!error && data) {
+    state.boletos.push(data);
+    state.boletos.sort((a, b) => a.due_date.localeCompare(b.due_date));
+    render();
+  } else if (error) alert("Erro ao salvar boleto: " + error.message);
+}
+
+function clearBoletoForm() {
+  ["bol-desc","bol-amount","bol-barcode"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  const fi = document.getElementById("bol-file");
+  if (fi) fi.value = "";
+}
+
+async function markBoletoAsPaid(id) {
+  const boleto = state.boletos.find(b => b.id === id);
+  if (!boleto) return;
+
+  // Apaga o arquivo do storage se tiver
+  if (boleto.file_path) {
+    await sb.storage.from("boletos").remove([boleto.file_path]);
+  }
+
+  // Apaga do banco
+  const { error } = await sb.from("boletos").delete().eq("id", id).eq("user_id", state.userId);
+  if (!error) {
+    state.boletos = state.boletos.filter(b => b.id !== id);
+    render();
+  } else alert("Erro ao marcar como pago: " + error.message);
+}
+
+async function downloadBoleto(filePath, boletoId) {
+  const { data, error } = await sb.storage.from("boletos").createSignedUrl(filePath, 60);
+  if (!error && data?.signedUrl) {
+    window.open(data.signedUrl, "_blank");
+  } else alert("Erro ao abrir arquivo.");
+}
+
+function copyBarcode(barcode) {
+  navigator.clipboard.writeText(barcode).then(() => {
+    alert("Código de barras copiado!");
+  }).catch(() => {
+    prompt("Copie o código:", barcode);
+  });
 }
 
 // =====================
