@@ -674,6 +674,7 @@ function onTxTypeChange() {
 // MOVIMENTAÇÕES
 // =====================
 function renderMovimentacoes() {
+  try {
   const now = new Date();
   const currentYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
 
@@ -772,6 +773,10 @@ function renderMovimentacoes() {
       ${groupsHTML || `<div class="empty">Nenhuma transação encontrada</div>`}
     </div>
   `;
+  } catch(e) {
+    document.getElementById("content").innerHTML = `<div class="loading-state" style="color:var(--red)">Erro ao carregar movimentações: ${e.message}</div>`;
+    console.error("renderMovimentacoes error:", e);
+  }
 }
 
 // =====================
