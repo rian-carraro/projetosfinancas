@@ -390,7 +390,7 @@ function renderDashboard() {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:13px;color:var(--text3)">Exibindo:</span>
-        <select onchange="state.dashMonth=this.value;render()" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:6px 28px 6px 10px;font-size:13px;font-weight:600;color:var(--text);appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 12 12%22%3E%3Cpath fill=%22%236b6d80%22 d=%22M6 8L1 3h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 8px center;cursor:pointer">
+        <select onchange="state.dashMonth=this.value;render()" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:6px 28px 6px 10px;font-size:13px;font-weight:600;color:var(--text);appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 12 12%22%3E%3Cpath fill=%22%236b6d80%22 d=%22M6 8L1 3h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 8px center;cursor:pointer;outline:none;transition:border-color .15s" onfocus="this.style.borderColor='var(--purple)'" onblur="this.style.borderColor='var(--border)'">
           ${availableMonths.map(ym => `<option value="${ym}" ${state.dashMonth===ym?"selected":""}>${monthLabel(ym)}${ym===currentYM?" (atual)":""}</option>`).join("")}
         </select>
       </div>
@@ -402,7 +402,7 @@ function renderDashboard() {
     <div class="summary-cards" style="grid-template-columns:repeat(4,1fr)">
       <div class="s-card">
         <div class="s-label">Saldo do mês</div>
-        <div class="s-value ${bal >= 0 ? "green" : "red"}">${fmt(bal)}</div>
+        <div class="s-value ${(inc - exp - fixedTotal) >= 0 ? "green" : "red"}">${fmt(inc - exp - fixedTotal)}</div>
         <div class="s-sub">${txs.length} transação(ões)</div>
       </div>
       <div class="s-card">
@@ -416,8 +416,8 @@ function renderDashboard() {
       </div>
       <div class="s-card">
         <div class="s-label">Gastos do mês</div>
-        <div class="s-value red">${fmt(exp)}</div>
-        <div class="s-sub">Fixas: ${fmt(fixedTotal)}/mês</div>
+        <div class="s-value red">${fmt(exp + fixedTotal)}</div>
+        <div class="s-sub">Variáveis: ${fmt(exp)} · Fixas: ${fmt(fixedTotal)}</div>
       </div>
     </div>
 
@@ -515,7 +515,7 @@ function renderLancamentos() {
         </div>
         <div class="form-group">
           <label>Descrição *</label>
-          <input id="f-desc" placeholder="Ex: Supermercado" required>
+          <input id="f-desc" placeholder="Ex: Supermercado" autocomplete="off" required>
         </div>
         <div class="form-group" id="f-date-group">
           <label>Data *</label>
@@ -774,7 +774,7 @@ function renderBancos() {
       <div class="form-grid">
         <div class="form-group">
           <label>Nome *</label>
-          <input id="b-name" placeholder="Ex: Nubank, Itaú, Carteira...">
+          <input id="b-name" placeholder="Ex: Nubank, Itaú, Carteira..." autocomplete="off">
         </div>
         <div class="form-group">
           <label>Saldo inicial (R$)</label>
@@ -831,7 +831,7 @@ function renderCartoes() {
       <div class="form-grid">
         <div class="form-group">
           <label>Nome *</label>
-          <input id="c-name" placeholder="Ex: Nubank Crédito">
+          <input id="c-name" placeholder="Ex: Nubank Crédito" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Tipo *</label>
@@ -915,7 +915,7 @@ function renderContasFixas() {
       <div class="form-grid">
         <div class="form-group">
           <label>Descrição *</label>
-          <input id="fx-desc" placeholder="Ex: Aluguel">
+          <input id="fx-desc" placeholder="Ex: Aluguel" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Valor (R$) *</label>
@@ -990,7 +990,7 @@ function renderMetas() {
       <div class="form-grid">
         <div class="form-group">
           <label>Nome *</label>
-          <input id="g-name" placeholder="Ex: Viagem para SP">
+          <input id="g-name" placeholder="Ex: Viagem para SP" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Valor alvo (R$) *</label>
@@ -1054,7 +1054,7 @@ function renderBoletos() {
       <div class="form-grid">
         <div class="form-group">
           <label>Descrição *</label>
-          <input id="bol-desc" placeholder="Ex: Conta de luz">
+          <input id="bol-desc" placeholder="Ex: Conta de luz" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Valor (R$) *</label>
@@ -1066,7 +1066,7 @@ function renderBoletos() {
         </div>
         <div class="form-group">
           <label>Código de barras (opcional)</label>
-          <input id="bol-barcode" placeholder="000.00000 00000.000000 00000.000000 0 00000000000000">
+          <input id="bol-barcode" placeholder="000.00000 00000.000000 00000.000000 0 00000000000000" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Arquivo (PDF ou imagem, opcional)</label>
@@ -1226,7 +1226,7 @@ function renderCategorias() {
       <div class="form-grid">
         <div class="form-group">
           <label>Nome *</label>
-          <input id="cat-name" placeholder="Ex: Academia">
+          <input id="cat-name" placeholder="Ex: Academia" autocomplete="off">
         </div>
       </div>
       <div class="form-actions">
