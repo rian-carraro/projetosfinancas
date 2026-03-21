@@ -1647,7 +1647,14 @@ function renderFaturas() {
 
   function isInvoicePaid(cardId, year, month) {
     const key = `${year}-${String(month+1).padStart(2,"0")}`;
-    return state.invoices.some(inv => Number(inv.card_id) === Number(cardId) && inv.month === key);
+    return state.invoices.some(inv => {
+      if (Number(inv.card_id) !== Number(cardId)) return false;
+      const invMonth = String(inv.month || "").trim();
+      // Aceita formato YYYY-MM ou YYYY-M
+      const [iy, im] = invMonth.split("-");
+      const normalizedInv = `${iy}-${String(parseInt(im)).padStart(2,"0")}`;
+      return normalizedInv === key;
+    });
   }
 
   const bankOptions = state.banks.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
@@ -1655,16 +1662,20 @@ function renderFaturas() {
   const cardsHTML = state.cards.map(card => {
     const color = card.color || "#7F77DD";
 
-    // Mostra só o total do mês atual em aberto
-    const currentFaturaTotal = isInvoicePaid(card.id, thisYear, thisMonth)
-      ? 0
-      : getFaturaTotal(card.id, thisYear, thisMonth);
+    // "Fatura atual" = primeiro mês não pago que tenha lançamentos
+    const firstUnpaid = faturaMonths.find(({ year, month }) =>
+      !isInvoicePaid(card.id, year, month) && getFaturaTotal(card.id, year, month) > 0
+    );
+    const currentFaturaTotal = firstUnpaid
+      ? getFaturaTotal(card.id, firstUnpaid.year, firstUnpaid.month)
+      : 0;
 
     const rowsHTML = faturaMonths.map(({ year, month }) => {
       const total     = getFaturaTotal(card.id, year, month);
       const paid      = isInvoicePaid(card.id, year, month);
       const key       = `${year}-${String(month+1).padStart(2,"0")}`;
-      const isNow     = year === thisYear && month === thisMonth;
+      // "Atual" = é o primeiro mês não pago com lançamentos deste cartão
+      const isNow     = firstUnpaid && year === firstUnpaid.year && month === firstUnpaid.month;
       const monthName = new Date(year, month, 1).toLocaleString("pt-BR", { month: "long", year: "numeric" });
       const items     = getFaturaItems(card.id, year, month);
       if (total === 0 && !paid) return "";
@@ -1699,7 +1710,7 @@ function renderFaturas() {
             <span>${card.name}</span>
             <span style="font-size:11px;color:var(--text3);font-weight:400">${card.type} · Fecha dia ${card.closing_day||"?"} · Vence dia ${card.due_day||"?"}</span>
           </div>
-          <span style="font-size:13px;color:var(--red);font-weight:600">Em aberto (mês atual): ${fmt(currentFaturaTotal)}</span>
+          <span style="font-size:13px;color:var(--red);font-weight:600">Fatura atual: ${fmt(currentFaturaTotal)}</span>
         </div>
         ${rowsHTML || `<div class="empty" style="padding:.5rem">Nenhuma compra nos próximos meses</div>`}
       </div>
@@ -2235,6 +2246,9 @@ function openEditModal(title, fields, onSave) {
   const modal = document.createElement("div");
   modal.id = "edit-modal";
   modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center;padding:1rem";
+  // Armazena o callback globalmente para o botão salvar chamar
+  window._editModalSave = onSave;
+
   modal.innerHTML = `
     <div style="background:${bg2};border:1px solid ${border};border-radius:16px;padding:1.5rem;width:100%;max-width:460px;max-height:90vh;overflow-y:auto">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
@@ -2244,7 +2258,7 @@ function openEditModal(title, fields, onSave) {
       ${fieldsHTML}
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
         <button onclick="closeEditModal()" class="btn btn-secondary">Cancelar</button>
-        <button onclick="(${onSave.toString()})()" class="btn btn-primary">Salvar</button>
+        <button onclick="window._editModalSave()" class="btn btn-primary">Salvar</button>
       </div>
     </div>
   `;
@@ -2255,6 +2269,7 @@ function openEditModal(title, fields, onSave) {
 function closeEditModal() {
   const m = document.getElementById("edit-modal");
   if (m) m.remove();
+  window._editModalSave = null;
 }
 
 function getEditField(key) {
