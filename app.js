@@ -674,23 +674,27 @@ function onTxTypeChange() {
 // MOVIMENTAÇÕES
 // =====================
 function renderMovimentacoes() {
-  // Mês atual no formato do monthKey (ex: "mar. 26")
-  const nowDate    = new Date();
-  const currentMonthKey = nowDate.toLocaleString("pt-BR", { month: "short", year: "2-digit" });
+  const now = new Date();
+  const currentYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
 
-  // Se não tem filtro de mês definido, usa o mês atual como padrão
-  if (!state.filterMonth) state.filterMonth = currentMonthKey;
+  // Usa YYYY-MM como valor do filtro — ordenável e sem ambiguidade
+  if (!state.filterMonth) state.filterMonth = currentYM;
 
-  // Todos os meses disponíveis nas transações, ordenados do mais recente ao mais antigo
-  const allMonths = [...new Set(state.transactions.map(t => monthKey(t.date)))]
-    .sort((a, b) => {
-      const parse = s => { const d = new Date("01 " + s); return d; };
-      return parse(b) - parse(a);
-    });
+  // Meses disponíveis ordenados do mais recente ao mais antigo
+  const allMonthsRaw = [...new Set(state.transactions.map(t => t.date.substring(0,7)))]
+    .sort((a, b) => b.localeCompare(a));
+  if (!allMonthsRaw.includes(currentYM)) allMonthsRaw.unshift(currentYM);
 
-  // Aplica filtros
+  // Label bonito para exibição
+  const fmtMonth = ym => {
+    const [y, m] = ym.split("-");
+    return new Date(parseInt(y), parseInt(m)-1, 1)
+      .toLocaleString("pt-BR", { month: "long", year: "numeric" });
+  };
+
+  // Aplica filtros — agora compara YYYY-MM com YYYY-MM
   let txs = state.transactions;
-  if (state.filterMonth) txs = txs.filter(t => monthKey(t.date) === state.filterMonth);
+  if (state.filterMonth) txs = txs.filter(t => t.date.substring(0,7) === state.filterMonth);
   if (state.filterCat)   txs = txs.filter(t => t.category === state.filterCat);
   if (state.filterCard)  txs = txs.filter(t => String(t.card_id) === String(state.filterCard));
   if (state.filterBank)  txs = txs.filter(t => String(t.bank_id) === String(state.filterBank));
@@ -698,16 +702,19 @@ function renderMovimentacoes() {
   const inc = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
   const exp = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
 
-  // Agrupa as transações por mês para exibir separadores
+  // Agrupa por YYYY-MM para exibir separadores
   const grouped = {};
   txs.forEach(t => {
-    const k = monthKey(t.date);
+    const k = t.date.substring(0,7);
     if (!grouped[k]) grouped[k] = [];
     grouped[k].push(t);
   });
 
   // Monta HTML com separadores por mês
-  const groupsHTML = Object.entries(grouped).map(([month, items]) => {
+  const groupsHTML = Object.entries(grouped)
+    .sort((a,b) => b[0].localeCompare(a[0]))
+    .map(([ym, items]) => {
+      const month = fmtMonth(ym);
     const mInc = items.filter(t => t.type==="receita").reduce((s,t) => s+parseFloat(t.amount), 0);
     const mExp = items.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
     const isCurrentMonth = month === currentMonthKey;
@@ -715,8 +722,8 @@ function renderMovimentacoes() {
       <div style="margin-bottom:1.2rem">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:2px solid var(--border);margin-bottom:4px">
           <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:14px;font-weight:600;color:var(--text);text-transform:capitalize">${month}</span>
-            ${isCurrentMonth ? `<span style="font-size:11px;background:var(--purple);color:#fff;padding:2px 8px;border-radius:99px">Mês atual</span>` : ""}
+            <span style="font-size:14px;font-weight:600;color:var(--text);text-transform:capitalize">${fmtMonth(ym)}</span>
+            ${ym===currentYM ? `<span style="font-size:11px;background:var(--purple);color:#fff;padding:2px 8px;border-radius:99px">Mês atual</span>` : ""}
           </div>
           <div style="display:flex;gap:16px;font-size:12px">
             <span style="color:var(--green)">+${fmt(mInc)}</span>
@@ -732,9 +739,9 @@ function renderMovimentacoes() {
   document.getElementById("content").innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:1rem">
       <div class="filters" style="margin-bottom:0;flex-wrap:wrap">
-        <select onchange="state.filterMonth=this.value;render()" style="font-weight:${state.filterMonth===currentMonthKey?"600":"400"}">
+        <select onchange="state.filterMonth=this.value;render()">
           <option value="">Todos os meses</option>
-          ${allMonths.map(m => `<option value="${m}" ${state.filterMonth===m?"selected":""}>${m}${m===currentMonthKey?" (atual)":""}</option>`).join("")}
+          ${allMonthsRaw.map(ym => `<option value="${ym}" ${state.filterMonth===ym?"selected":""}>${fmtMonth(ym)}${ym===currentYM?" (atual)":""}</option>`).join("")}
         </select>
         <select onchange="state.filterCat=this.value;render()">
           <option value="">Todas as categorias</option>
@@ -761,7 +768,7 @@ function renderMovimentacoes() {
       <div class="section-title">
         ${txs.length} lançamento${txs.length!==1?"s":""}
         <span style="font-size:12px;color:var(--text3);font-weight:400">
-          ${state.filterMonth ? state.filterMonth : "todos os meses"}
+          ${state.filterMonth ? fmtMonth(state.filterMonth) : "todos os meses"}
         </span>
       </div>
       ${groupsHTML || `<div class="empty">Nenhuma transação encontrada</div>`}
