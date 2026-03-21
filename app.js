@@ -402,7 +402,7 @@ function renderDashboard() {
     <div class="summary-cards" style="grid-template-columns:repeat(4,1fr)">
       <div class="s-card">
         <div class="s-label">Saldo do mês</div>
-        <div class="s-value ${(inc - exp - fixedTotal) >= 0 ? "green" : "red"}">${fmt(inc - exp - fixedTotal)}</div>
+        <div class="s-value ${bal >= 0 ? "green" : "red"}">${fmt(bal)}</div>
         <div class="s-sub">${txs.length} transação(ões)</div>
       </div>
       <div class="s-card">
@@ -416,8 +416,8 @@ function renderDashboard() {
       </div>
       <div class="s-card">
         <div class="s-label">Gastos do mês</div>
-        <div class="s-value red">${fmt(exp + fixedTotal)}</div>
-        <div class="s-sub">Variáveis: ${fmt(exp)} · Fixas: ${fmt(fixedTotal)}</div>
+        <div class="s-value red">${fmt(exp)}</div>
+        <div class="s-sub">Fixas cadastradas: ${fmt(fixedTotal)}/mês</div>
       </div>
     </div>
 
