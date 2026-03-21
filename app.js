@@ -714,11 +714,9 @@ function renderMovimentacoes() {
   const groupsHTML = Object.entries(grouped)
     .sort((a,b) => b[0].localeCompare(a[0]))
     .map(([ym, items]) => {
-      const month = fmtMonth(ym);
-    const mInc = items.filter(t => t.type==="receita").reduce((s,t) => s+parseFloat(t.amount), 0);
-    const mExp = items.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
-    const isCurrentMonth = month === currentMonthKey;
-    return `
+      const mInc = items.filter(t => t.type==="receita").reduce((s,t) => s+parseFloat(t.amount), 0);
+      const mExp = items.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
+      return `
       <div style="margin-bottom:1.2rem">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:2px solid var(--border);margin-bottom:4px">
           <div style="display:flex;align-items:center;gap:10px">
