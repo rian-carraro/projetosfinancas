@@ -227,6 +227,7 @@ function resetState() {
   state.banks        = [];
   state.boletos      = [];
   state.invoices     = [];
+  state.dashMonth    = "";
   state.page         = "dashboard";
 }
 
@@ -327,21 +328,37 @@ function render() {
 // DASHBOARD
 // =====================
 function renderDashboard() {
-  const txs        = state.transactions;
+  // Mês selecionado no dashboard (padrão: mês atual)
+  const now = new Date();
+  const currentYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+  if (!state.dashMonth) state.dashMonth = currentYM;
+
+  // Filtra transações do mês selecionado
+  const allTxs    = state.transactions;
+  const txs       = allTxs.filter(t => t.date.substring(0,7) === state.dashMonth);
   const inc        = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
   const exp        = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
   const bal        = inc - exp;
   const fixedTotal = state.fixed.reduce((s, f) => s + parseFloat(f.amount), 0);
   const totalBankBalance = state.banks.reduce((s, b) => s + bankBalance(b), 0);
 
+  // Meses disponíveis para o seletor
+  const availableMonths = [...new Set(allTxs.map(t => t.date.substring(0,7)))].sort().reverse();
+  if (!availableMonths.includes(currentYM)) availableMonths.unshift(currentYM);
+
+  const monthLabel = ym => {
+    const [y, m] = ym.split("-");
+    return new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month: "long", year: "numeric" });
+  };
+
   const months = {};
-  const now = new Date();
+  const nowObj = new Date();
   for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const d = new Date(nowObj.getFullYear(), nowObj.getMonth() - i, 1);
     const k = d.toLocaleString("pt-BR", { month: "short", year: "2-digit" });
     months[k] = { k, inc: 0, exp: 0 };
   }
-  txs.forEach(t => {
+  allTxs.forEach(t => {
     const k = monthKey(t.date);
     if (months[k]) { t.type === "receita" ? months[k].inc += parseFloat(t.amount) : months[k].exp += parseFloat(t.amount); }
   });
@@ -356,37 +373,49 @@ function renderDashboard() {
   const boletosHoje    = state.boletos.filter(b => b.due_date === today());
   const boletosVencidos = state.boletos.filter(b => b.due_date < today());
   const alertBoletos = (boletosHoje.length || boletosVencidos.length) ? `
-    <div style="background:#1a1a1a;border:1px solid #E24B4A;border-radius:12px;padding:14px 18px;margin-bottom:1.2rem;display:flex;justify-content:space-between;align-items:center">
+    <div style="background:rgba(216,90,48,.1);border:1px solid var(--red);border-radius:12px;padding:14px 18px;margin-bottom:1.2rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>
-        <div style="font-size:14px;font-weight:500;color:#D85A30">
+        <div style="font-size:14px;font-weight:500;color:var(--red)">
           ${boletosHoje.length ? `${boletosHoje.length} boleto(s) vencendo hoje` : ""}
           ${boletosHoje.length && boletosVencidos.length ? " · " : ""}
           ${boletosVencidos.length ? `${boletosVencidos.length} boleto(s) vencido(s)` : ""}
         </div>
-        <div style="font-size:12px;color:#884F0B;margin-top:3px">Acesse a página de boletos para pagar</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:3px">Acesse a página de boletos para pagar</div>
       </div>
-      <button class="btn btn-sm" style="border-color:#D85A30;color:#D85A30" onclick="goTo('boletos')">Ver boletos</button>
+      <button class="btn btn-sm" style="border-color:var(--red);color:var(--red)" onclick="goTo('boletos')">Ver boletos</button>
     </div>
   ` : "";
 
-  document.getElementById("content").innerHTML = alertBoletos + `
+  const monthSelectorHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:13px;color:var(--text3)">Exibindo:</span>
+        <select onchange="state.dashMonth=this.value;render()" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:6px 28px 6px 10px;font-size:13px;font-weight:600;color:var(--text);appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 12 12%22%3E%3Cpath fill=%22%236b6d80%22 d=%22M6 8L1 3h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 8px center;cursor:pointer">
+          ${availableMonths.map(ym => `<option value="${ym}" ${state.dashMonth===ym?"selected":""}>${monthLabel(ym)}${ym===currentYM?" (atual)":""}</option>`).join("")}
+        </select>
+      </div>
+      ${state.dashMonth !== currentYM ? `<button class="btn btn-secondary btn-sm" onclick="state.dashMonth='${currentYM}';render()">Voltar ao mês atual</button>` : ""}
+    </div>
+  `;
+
+  document.getElementById("content").innerHTML = alertBoletos + monthSelectorHTML + `
     <div class="summary-cards" style="grid-template-columns:repeat(4,1fr)">
       <div class="s-card">
-        <div class="s-label">Saldo (transações)</div>
+        <div class="s-label">Saldo do mês</div>
         <div class="s-value ${bal >= 0 ? "green" : "red"}">${fmt(bal)}</div>
-        <div class="s-sub">todas as transações</div>
+        <div class="s-sub">${txs.length} transação(ões)</div>
       </div>
       <div class="s-card">
         <div class="s-label">Saldo em bancos</div>
         <div class="s-value ${totalBankBalance >= 0 ? "green" : "red"}">${fmt(totalBankBalance)}</div>
-        <div class="s-sub">${state.banks.length} banco(s)</div>
+        <div class="s-sub">${state.banks.length} banco(s) · total geral</div>
       </div>
       <div class="s-card">
-        <div class="s-label">Receitas</div>
+        <div class="s-label">Receitas do mês</div>
         <div class="s-value green">${fmt(inc)}</div>
       </div>
       <div class="s-card">
-        <div class="s-label">Gastos</div>
+        <div class="s-label">Gastos do mês</div>
         <div class="s-value red">${fmt(exp)}</div>
         <div class="s-sub">Fixas: ${fmt(fixedTotal)}/mês</div>
       </div>
@@ -437,7 +466,7 @@ function renderDashboard() {
         Movimentações recentes
         <button class="btn btn-secondary btn-sm" onclick="goTo('movimentacoes')">Ver todas</button>
       </div>
-      ${txs.slice(0, 5).map(tx => txRow(tx)).join("") || `<div class="empty">Nenhuma transação</div>`}
+      ${txs.slice(0, 5).map(tx => txRow(tx)).join("") || `<div class="empty">Nenhuma transação no mês selecionado</div>`}
     </div>
 
     <div class="section">
@@ -1562,11 +1591,10 @@ function renderFaturas() {
     return;
   }
 
-  const now        = new Date();
-  const thisYear   = now.getFullYear();
-  const thisMonth  = now.getMonth(); // 0-indexed
+  const now       = new Date();
+  const thisYear  = now.getFullYear();
+  const thisMonth = now.getMonth();
 
-  // Gera os próximos 6 meses + mês atual
   const faturaMonths = [];
   for (let i = 0; i <= 5; i++) {
     let m = thisMonth + i;
@@ -1575,13 +1603,10 @@ function renderFaturas() {
     faturaMonths.push({ year: y, month: m });
   }
 
-  // Calcula o total de cada fatura por cartão e mês
-  // Uma transação pertence à fatura do mês em que sua data cai
   function getFaturaTotal(cardId, year, month) {
     return state.transactions
       .filter(t => {
-        if (Number(t.card_id) !== Number(cardId)) return false;
-        if (t.type !== "despesa") return false;
+        if (Number(t.card_id) !== Number(cardId) || t.type !== "despesa") return false;
         const d = new Date(t.date + "T00:00:00");
         return d.getFullYear() === year && d.getMonth() === month;
       })
@@ -1590,8 +1615,7 @@ function renderFaturas() {
 
   function getFaturaItems(cardId, year, month) {
     return state.transactions.filter(t => {
-      if (Number(t.card_id) !== Number(cardId)) return false;
-      if (t.type !== "despesa") return false;
+      if (Number(t.card_id) !== Number(cardId) || t.type !== "despesa") return false;
       const d = new Date(t.date + "T00:00:00");
       return d.getFullYear() === year && d.getMonth() === month;
     });
@@ -1606,74 +1630,54 @@ function renderFaturas() {
 
   const cardsHTML = state.cards.map(card => {
     const color = card.color || "#7F77DD";
-    const r = parseInt(color.slice(1,3),16);
-    const g = parseInt(color.slice(3,5),16);
-    const b = parseInt(color.slice(5,7),16);
-
-    const monthsHTML = faturaMonths.map(({ year, month }) => {
-      const total   = getFaturaTotal(card.id, year, month);
-      const items   = getFaturaItems(card.id, year, month);
-      const paid    = isInvoicePaid(card.id, year, month);
-      const key     = `${year}-${String(month+1).padStart(2,"0")}`;
-      const isNow   = year === thisYear && month === thisMonth;
-      const monthName = new Date(year, month, 1).toLocaleString("pt-BR", { month: "long", year: "numeric" });
-
-      if (total === 0 && !paid) return "";
-
-      return `
-        <div style="border:1px solid ${paid ? "var(--border)" : (isNow ? color : "var(--border)")};border-radius:10px;padding:1rem;margin-bottom:10px;opacity:${paid?".6":"1"}">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${items.length?"10px":"0"}">
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="font-size:13px;font-weight:600;color:var(--text);text-transform:capitalize">${monthName}</span>
-              ${isNow ? `<span style="font-size:11px;background:${color};color:#fff;padding:2px 8px;border-radius:99px">Atual</span>` : ""}
-              ${paid  ? `<span style="font-size:11px;background:var(--bg3);color:var(--green);padding:2px 8px;border-radius:99px">Paga</span>` : ""}
-            </div>
-            <div style="display:flex;align-items:center;gap:10px">
-              <span style="font-size:16px;font-weight:700;color:${paid?"var(--text3)":"var(--red)"}">
-                ${fmt(total)}
-              </span>
-              ${!paid && total > 0 ? `
-                <button class="btn btn-sm btn-primary" onclick="openPayInvoice('${card.id}','${key}','${total}')">
-                  Pagar fatura
-                </button>` : ""}
-            </div>
-          </div>
-          ${items.length ? `
-            <div style="border-top:1px solid var(--border);padding-top:8px">
-              ${items.slice(0, 5).map(t => `
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px;border-bottom:1px solid var(--bg3)">
-                  <div style="min-width:0;flex:1">
-                    <span style="color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">${t.description}</span>
-                    <span style="color:var(--text3)">${new Date(t.date+"T00:00:00").toLocaleDateString("pt-BR")}
-                      ${t.installment_total > 1 ? `· ${t.installment_number}/${t.installment_total}x` : ""}
-                    </span>
-                  </div>
-                  <span style="color:var(--red);font-weight:600;margin-left:12px;white-space:nowrap">${fmt(t.amount)}</span>
-                </div>
-              `).join("")}
-              ${items.length > 5 ? `<div style="font-size:11px;color:var(--text3);padding-top:6px;text-align:center">+ ${items.length-5} lançamento(s)</div>` : ""}
-            </div>
-          ` : ""}
-        </div>
-      `;
-    }).join("");
 
     const totalAberto = faturaMonths.reduce((s, {year, month}) => {
       if (isInvoicePaid(card.id, year, month)) return s;
       return s + getFaturaTotal(card.id, year, month);
     }, 0);
 
+    const rowsHTML = faturaMonths.map(({ year, month }) => {
+      const total     = getFaturaTotal(card.id, year, month);
+      const paid      = isInvoicePaid(card.id, year, month);
+      const key       = `${year}-${String(month+1).padStart(2,"0")}`;
+      const isNow     = year === thisYear && month === thisMonth;
+      const monthName = new Date(year, month, 1).toLocaleString("pt-BR", { month: "long", year: "numeric" });
+      const items     = getFaturaItems(card.id, year, month);
+      if (total === 0 && !paid) return "";
+
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--bg3);gap:10px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <div style="width:3px;height:36px;border-radius:99px;background:${paid?"var(--border)":isNow?color:"var(--border2)"};flex-shrink:0"></div>
+            <div>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <span style="font-size:13px;font-weight:600;color:var(--text);text-transform:capitalize">${monthName}</span>
+                ${isNow ? `<span style="font-size:10px;background:${color};color:#fff;padding:1px 7px;border-radius:99px">atual</span>` : ""}
+                ${paid  ? `<span style="font-size:10px;background:var(--bg3);color:var(--green);padding:1px 7px;border-radius:99px">paga</span>` : ""}
+              </div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">${items.length} lançamento(s)</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+            <span style="font-size:15px;font-weight:700;color:${paid?"var(--text3)":isNow?"var(--red)":"var(--text2)"}">${fmt(total)}</span>
+            <button class="btn btn-sm btn-secondary" onclick="openFaturaModal('${card.id}','${key}')">Ver fatura</button>
+            ${!paid && total > 0 ? `<button class="btn btn-sm btn-primary" onclick="openPayInvoice('${card.id}','${key}','${total}')">Pagar</button>` : ""}
+          </div>
+        </div>
+      `;
+    }).join("");
+
     return `
-      <div class="section" style="border-top:4px solid ${color}">
+      <div class="section" style="border-top:3px solid ${color}">
         <div class="section-title">
-          <div style="display:flex;align-items:center;gap:10px">
-            <div style="width:12px;height:12px;border-radius:50%;background:${color}"></div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0"></div>
             <span>${card.name}</span>
             <span style="font-size:11px;color:var(--text3);font-weight:400">${card.type} · Fecha dia ${card.closing_day||"?"} · Vence dia ${card.due_day||"?"}</span>
           </div>
           <span style="font-size:13px;color:var(--red);font-weight:600">Em aberto: ${fmt(totalAberto)}</span>
         </div>
-        ${monthsHTML || `<div class="empty" style="padding:1rem">Nenhuma compra nos próximos meses</div>`}
+        ${rowsHTML || `<div class="empty" style="padding:.5rem">Nenhuma compra nos próximos meses</div>`}
       </div>
     `;
   }).join("");
@@ -1690,7 +1694,7 @@ function renderFaturas() {
         const [y, m] = inv.month.split("-");
         const monthName = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
         return `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--bg3);font-size:13px">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--bg3);font-size:13px;flex-wrap:wrap;gap:6px">
             <div>
               <span style="font-weight:500;color:var(--text)">${card?.name || "Cartão"}</span>
               <span style="color:var(--text3);margin-left:8px;text-transform:capitalize">${monthName}</span>
@@ -1702,8 +1706,17 @@ function renderFaturas() {
       }).join("")}
     </div>` : ""}
 
+    <!-- Modal detalhe da fatura -->
+    <div id="fatura-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center;padding:1rem">
+      <div id="fatura-detail-inner" style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;width:100%;max-width:520px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden">
+        <div id="fatura-detail-header" style="padding:1.2rem 1.4rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0"></div>
+        <div id="fatura-detail-body" style="padding:1.2rem 1.4rem;overflow-y:auto;flex:1"></div>
+        <div id="fatura-detail-footer" style="padding:1rem 1.4rem;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-shrink:0"></div>
+      </div>
+    </div>
+
     <!-- Modal pagar fatura -->
-    <div id="pay-invoice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center;padding:1rem">
+    <div id="pay-invoice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:101;align-items:center;justify-content:center;padding:1rem">
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:1.5rem;width:100%;max-width:400px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
           <span style="font-size:15px;font-weight:600;color:var(--text)">Pagar fatura</span>
@@ -1724,6 +1737,64 @@ function renderFaturas() {
       </div>
     </div>
   `;
+}
+
+function openFaturaModal(cardId, month) {
+  const card  = state.cards.find(c => Number(c.id) === Number(cardId));
+  const color = card?.color || "#7F77DD";
+  const [y, m] = month.split("-");
+  const year     = parseInt(y);
+  const monthIdx = parseInt(m) - 1;
+  const monthName = new Date(year, monthIdx, 1).toLocaleString("pt-BR", { month: "long", year: "numeric" });
+  const paid  = state.invoices.some(inv => Number(inv.card_id) === Number(cardId) && inv.month === month);
+
+  const items = state.transactions.filter(t => {
+    if (Number(t.card_id) !== Number(cardId) || t.type !== "despesa") return false;
+    const d = new Date(t.date + "T00:00:00");
+    return d.getFullYear() === year && d.getMonth() === monthIdx;
+  }).sort((a, b) => a.date.localeCompare(b.date));
+
+  const total = items.reduce((s, t) => s + parseFloat(t.amount), 0);
+
+  document.getElementById("fatura-detail-header").innerHTML = `
+    <div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:10px;height:10px;border-radius:50%;background:${color}"></div>
+        <span style="font-size:15px;font-weight:600;color:var(--text)">${card?.name}</span>
+        ${paid ? `<span style="font-size:11px;background:var(--bg3);color:var(--green);padding:2px 8px;border-radius:99px">Paga</span>` : ""}
+      </div>
+      <div style="font-size:12px;color:var(--text3);margin-top:3px;text-transform:capitalize">${monthName}</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:18px;font-weight:700;color:${paid?"var(--green)":"var(--red)"}"> ${fmt(total)}</span>
+      <button class="btn-icon" onclick="closeFaturaModal()">✕</button>
+    </div>
+  `;
+
+  document.getElementById("fatura-detail-body").innerHTML = items.length ? items.map(t => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--bg3);gap:10px">
+      <div style="min-width:0;flex:1">
+        <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.description}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">
+          ${new Date(t.date+"T00:00:00").toLocaleDateString("pt-BR")}
+          ${t.category ? `· ${t.category}` : ""}
+          ${t.installment_total > 1 ? `· <strong>${t.installment_number}/${t.installment_total}x</strong>` : ""}
+        </div>
+      </div>
+      <span style="font-size:14px;font-weight:600;color:var(--red);white-space:nowrap">${fmt(t.amount)}</span>
+    </div>
+  `).join("") : `<div class="empty">Nenhum lançamento nesta fatura</div>`;
+
+  document.getElementById("fatura-detail-footer").innerHTML = `
+    <button class="btn btn-secondary" onclick="closeFaturaModal()">Fechar</button>
+    ${!paid && total > 0 ? `<button class="btn btn-primary" onclick="closeFaturaModal();openPayInvoice('${cardId}','${month}','${total}')">Pagar fatura</button>` : ""}
+  `;
+
+  document.getElementById("fatura-detail-modal").style.display = "flex";
+}
+
+function closeFaturaModal() {
+  document.getElementById("fatura-detail-modal").style.display = "none";
 }
 
 let _payInvoiceData = null;
