@@ -337,9 +337,10 @@ function renderDashboard() {
   const allTxs    = state.transactions;
   const txs       = allTxs.filter(t => t.date.substring(0,7) === state.dashMonth);
   const inc        = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
-  const exp        = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
-  const bal        = inc - exp;
+  const expTxs     = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
   const fixedTotal = state.fixed.reduce((s, f) => s + parseFloat(f.amount), 0);
+  const exp        = expTxs + fixedTotal; // contas fixas somadas automaticamente
+  const bal        = inc - exp;
   const totalBankBalance = state.banks.reduce((s, b) => s + bankBalance(b), 0);
 
   // Meses disponíveis para o seletor
@@ -417,7 +418,7 @@ function renderDashboard() {
       <div class="s-card">
         <div class="s-label">Gastos do mês</div>
         <div class="s-value red">${fmt(exp)}</div>
-        <div class="s-sub">Fixas cadastradas: ${fmt(fixedTotal)}/mês</div>
+        <div class="s-sub">Lançamentos: ${fmt(expTxs)} · Fixas: ${fmt(fixedTotal)}</div>
       </div>
     </div>
 
@@ -515,15 +516,15 @@ function renderLancamentos() {
         </div>
         <div class="form-group">
           <label>Descrição *</label>
-          <input id="f-desc" placeholder="Ex: Supermercado" autocomplete="off" required>
+          <input autocomplete="off" id="f-desc" placeholder="Ex: Supermercado" autocomplete="off" required>
         </div>
         <div class="form-group" id="f-date-group">
           <label>Data *</label>
-          <input id="f-date" type="date" value="${today()}" required>
+          <input autocomplete="off" id="f-date" type="date" value="${today()}" required>
         </div>
         <div class="form-group">
           <label>Valor (R$) *</label>
-          <input id="f-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)" required>
+          <input autocomplete="off" id="f-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)" required>
         </div>
         <div class="form-group">
           <label>Categoria</label>
@@ -550,7 +551,7 @@ function renderLancamentos() {
         </div>
         <div class="form-group" id="f-installments-group" style="display:none">
           <label>Número de parcelas *</label>
-          <input id="f-installments" type="text" inputmode="numeric" placeholder="Ex: 3" oninput="this.value=this.value.replace(/\D/g,'')">
+          <input autocomplete="off" id="f-installments" type="text" inputmode="numeric" placeholder="Ex: 3" oninput="this.value=this.value.replace(/\D/g,'')">
         </div>
       </div>
       <div class="form-actions">
@@ -774,11 +775,11 @@ function renderBancos() {
       <div class="form-grid">
         <div class="form-group">
           <label>Nome *</label>
-          <input id="b-name" placeholder="Ex: Nubank, Itaú, Carteira..." autocomplete="off">
+          <input autocomplete="off" id="b-name" placeholder="Ex: Nubank, Itaú, Carteira..." autocomplete="off">
         </div>
         <div class="form-group">
           <label>Saldo inicial (R$)</label>
-          <input id="b-balance" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+          <input autocomplete="off" id="b-balance" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
         </div>
       </div>
       <div class="form-actions">
@@ -831,7 +832,7 @@ function renderCartoes() {
       <div class="form-grid">
         <div class="form-group">
           <label>Nome *</label>
-          <input id="c-name" placeholder="Ex: Nubank Crédito" autocomplete="off">
+          <input autocomplete="off" id="c-name" placeholder="Ex: Nubank Crédito" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Tipo *</label>
@@ -845,21 +846,21 @@ function renderCartoes() {
         <div class="form-group">
           <label>Cor do cartão</label>
           <div style="display:flex;align-items:center;gap:8px">
-            <input type="color" id="c-color" value="#7F77DD" style="width:40px;height:36px;padding:2px;border-radius:8px;border:1px solid #2a2d3a;background:#0f1117;cursor:pointer">
+            <input autocomplete="off" type="color" id="c-color" value="#7F77DD" style="width:40px;height:36px;padding:2px;border-radius:8px;border:1px solid #2a2d3a;background:#0f1117;cursor:pointer">
             <span id="c-color-label" style="font-size:12px;color:#666">#7F77DD</span>
           </div>
         </div>
         <div class="form-group">
           <label>Limite (R$)</label>
-          <input id="c-limit" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+          <input autocomplete="off" id="c-limit" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
         </div>
         <div class="form-group">
           <label>Fechamento (dia) *</label>
-          <input id="c-closing" type="text" inputmode="numeric" placeholder="Ex: 28" oninput="this.value=this.value.replace(/\D/g,'')">
+          <input autocomplete="off" id="c-closing" type="text" inputmode="numeric" placeholder="Ex: 28" oninput="this.value=this.value.replace(/\D/g,'')">
         </div>
         <div class="form-group">
           <label>Vencimento (dia) *</label>
-          <input id="c-due" type="text" inputmode="numeric" placeholder="Ex: 5" oninput="this.value=this.value.replace(/\D/g,'')">
+          <input autocomplete="off" id="c-due" type="text" inputmode="numeric" placeholder="Ex: 5" oninput="this.value=this.value.replace(/\D/g,'')">
         </div>
       </div>
       <div class="form-actions">
@@ -915,15 +916,15 @@ function renderContasFixas() {
       <div class="form-grid">
         <div class="form-group">
           <label>Descrição *</label>
-          <input id="fx-desc" placeholder="Ex: Aluguel" autocomplete="off">
+          <input autocomplete="off" id="fx-desc" placeholder="Ex: Aluguel" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Valor (R$) *</label>
-          <input id="fx-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+          <input autocomplete="off" id="fx-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
         </div>
         <div class="form-group">
           <label>Vencimento (dia) *</label>
-          <input id="fx-due" type="text" inputmode="numeric" placeholder="Ex: 10" oninput="this.value=this.value.replace(/\D/g,'')">
+          <input autocomplete="off" id="fx-due" type="text" inputmode="numeric" placeholder="Ex: 10" oninput="this.value=this.value.replace(/\D/g,'')">
         </div>
         <div class="form-group">
           <label>Categoria</label>
@@ -990,11 +991,11 @@ function renderMetas() {
       <div class="form-grid">
         <div class="form-group">
           <label>Nome *</label>
-          <input id="g-name" placeholder="Ex: Viagem para SP" autocomplete="off">
+          <input autocomplete="off" id="g-name" placeholder="Ex: Viagem para SP" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Valor alvo (R$) *</label>
-          <input id="g-target" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+          <input autocomplete="off" id="g-target" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
         </div>
         <div class="form-group">
           <label>Banco vinculado (opcional)</label>
@@ -1054,19 +1055,19 @@ function renderBoletos() {
       <div class="form-grid">
         <div class="form-group">
           <label>Descrição *</label>
-          <input id="bol-desc" placeholder="Ex: Conta de luz" autocomplete="off">
+          <input autocomplete="off" id="bol-desc" placeholder="Ex: Conta de luz" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Valor (R$) *</label>
-          <input id="bol-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+          <input autocomplete="off" id="bol-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
         </div>
         <div class="form-group">
           <label>Vencimento *</label>
-          <input id="bol-date" type="date" value="${hoje}">
+          <input autocomplete="off" id="bol-date" type="date" value="${hoje}">
         </div>
         <div class="form-group">
           <label>Código de barras (opcional)</label>
-          <input id="bol-barcode" placeholder="000.00000 00000.000000 00000.000000 0 00000000000000" autocomplete="off">
+          <input autocomplete="off" id="bol-barcode" placeholder="000.00000 00000.000000 00000.000000 0 00000000000000" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Arquivo (PDF ou imagem, opcional)</label>
@@ -1074,7 +1075,7 @@ function renderBoletos() {
             <span style="background:#7F77DD;color:#fff;padding:4px 12px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap">Escolher arquivo</span>
             <span id="bol-file-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Nenhum arquivo selecionado</span>
           </label>
-          <input id="bol-file" type="file" accept=".pdf,image/*" style="display:none" onchange="document.getElementById('bol-file-name').textContent = this.files[0]?.name || 'Nenhum arquivo selecionado'">
+          <input autocomplete="off" id="bol-file" type="file" accept=".pdf,image/*" style="display:none" onchange="document.getElementById('bol-file-name').textContent = this.files[0]?.name || 'Nenhum arquivo selecionado'">
         </div>
       </div>
       <div class="form-actions">
@@ -1226,7 +1227,7 @@ function renderCategorias() {
       <div class="form-grid">
         <div class="form-group">
           <label>Nome *</label>
-          <input id="cat-name" placeholder="Ex: Academia" autocomplete="off">
+          <input autocomplete="off" id="cat-name" placeholder="Ex: Academia" autocomplete="off">
         </div>
       </div>
       <div class="form-actions">
