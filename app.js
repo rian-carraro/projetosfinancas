@@ -63,6 +63,7 @@ const PAGES = [
   { id: "movimentacoes",label: "Movimentações" },
   { id: "bancos",       label: "Bancos"        },
   { id: "cartoes",      label: "Cartões"       },
+  { id: "faturas",      label: "Faturas"       },
   { id: "contas-fixas", label: "Contas Fixas"  },
   { id: "metas",        label: "Metas"         },
   { id: "boletos",      label: "Boletos"       },
@@ -112,6 +113,7 @@ let state = {
   filterCard:   "",
   filterBank:   "",
   boletos:      [],
+  invoices:     [],
 };
 
 // =====================
@@ -224,6 +226,7 @@ function resetState() {
   state.fixed        = [];
   state.banks        = [];
   state.boletos      = [];
+  state.invoices     = [];
   state.page         = "dashboard";
 }
 
@@ -257,6 +260,14 @@ async function loadData() {
       state.boletos = [];
     }
 
+    // Faturas pagas
+    try {
+      const r8 = await sb.from("invoices").select("*").eq("user_id", uid).order("created_at", { ascending: false });
+      state.invoices = r8.data || [];
+    } catch (e) {
+      state.invoices = [];
+    }
+
     return true;
   } catch (e) {
     console.error("Erro ao carregar dados:", e);
@@ -287,6 +298,10 @@ function buildNav() {
 }
 
 function goTo(page) {
+  // Reseta filtro de mês ao sair de movimentacoes para não prender em mês fixo
+  if (state.page === "movimentacoes" && page !== "movimentacoes") {
+    state.filterMonth = "";
+  }
   state.page = page;
   buildNav();
   closeSidebar();
@@ -303,6 +318,7 @@ function render() {
   else if (p === "cartoes")      renderCartoes();
   else if (p === "contas-fixas") renderContasFixas();
   else if (p === "metas")        renderMetas();
+  else if (p === "faturas")      renderFaturas();
   else if (p === "boletos")      renderBoletos();
   else if (p === "categorias")   renderCategorias();
 }
@@ -623,7 +639,21 @@ function onTxTypeChange() {
 // MOVIMENTAÇÕES
 // =====================
 function renderMovimentacoes() {
-  const months = [...new Set(state.transactions.map(t => monthKey(t.date)))];
+  // Mês atual no formato do monthKey (ex: "mar. 26")
+  const nowDate    = new Date();
+  const currentMonthKey = nowDate.toLocaleString("pt-BR", { month: "short", year: "2-digit" });
+
+  // Se não tem filtro de mês definido, usa o mês atual como padrão
+  if (!state.filterMonth) state.filterMonth = currentMonthKey;
+
+  // Todos os meses disponíveis nas transações, ordenados do mais recente ao mais antigo
+  const allMonths = [...new Set(state.transactions.map(t => monthKey(t.date)))]
+    .sort((a, b) => {
+      const parse = s => { const d = new Date("01 " + s); return d; };
+      return parse(b) - parse(a);
+    });
+
+  // Aplica filtros
   let txs = state.transactions;
   if (state.filterMonth) txs = txs.filter(t => monthKey(t.date) === state.filterMonth);
   if (state.filterCat)   txs = txs.filter(t => t.category === state.filterCat);
@@ -633,33 +663,73 @@ function renderMovimentacoes() {
   const inc = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
   const exp = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
 
+  // Agrupa as transações por mês para exibir separadores
+  const grouped = {};
+  txs.forEach(t => {
+    const k = monthKey(t.date);
+    if (!grouped[k]) grouped[k] = [];
+    grouped[k].push(t);
+  });
+
+  // Monta HTML com separadores por mês
+  const groupsHTML = Object.entries(grouped).map(([month, items]) => {
+    const mInc = items.filter(t => t.type==="receita").reduce((s,t) => s+parseFloat(t.amount), 0);
+    const mExp = items.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
+    const isCurrentMonth = month === currentMonthKey;
+    return `
+      <div style="margin-bottom:1.2rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:2px solid var(--border);margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:14px;font-weight:600;color:var(--text);text-transform:capitalize">${month}</span>
+            ${isCurrentMonth ? `<span style="font-size:11px;background:var(--purple);color:#fff;padding:2px 8px;border-radius:99px">Mês atual</span>` : ""}
+          </div>
+          <div style="display:flex;gap:16px;font-size:12px">
+            <span style="color:var(--green)">+${fmt(mInc)}</span>
+            <span style="color:var(--red)">-${fmt(mExp)}</span>
+            <span style="color:${mInc-mExp>=0?"var(--green)":"var(--red)"};font-weight:600">${fmt(mInc-mExp)}</span>
+          </div>
+        </div>
+        ${items.map(tx => txRow(tx)).join("")}
+      </div>
+    `;
+  }).join("");
+
   document.getElementById("content").innerHTML = `
-    <div class="filters">
-      <select onchange="state.filterMonth=this.value;render()">
-        <option value="">Todos os meses</option>
-        ${months.map(m => `<option value="${m}" ${state.filterMonth===m?"selected":""}>${m}</option>`).join("")}
-      </select>
-      <select onchange="state.filterCat=this.value;render()">
-        <option value="">Todas as categorias</option>
-        ${state.categories.map(c => `<option value="${c.name}" ${state.filterCat===c.name?"selected":""}>${c.name}</option>`).join("")}
-      </select>
-      <select onchange="state.filterBank=this.value;render()">
-        <option value="">Todos os bancos</option>
-        ${state.banks.map(b => `<option value="${b.id}" ${String(state.filterBank)===String(b.id)?"selected":""}>${b.name}</option>`).join("")}
-      </select>
-      <select onchange="state.filterCard=this.value;render()">
-        <option value="">Todos os cartões</option>
-        ${state.cards.map(c => `<option value="${c.id}" ${String(state.filterCard)===String(c.id)?"selected":""}>${c.name}</option>`).join("")}
-      </select>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:1rem">
+      <div class="filters" style="margin-bottom:0;flex-wrap:wrap">
+        <select onchange="state.filterMonth=this.value;render()" style="font-weight:${state.filterMonth===currentMonthKey?"600":"400"}">
+          <option value="">Todos os meses</option>
+          ${allMonths.map(m => `<option value="${m}" ${state.filterMonth===m?"selected":""}>${m}${m===currentMonthKey?" (atual)":""}</option>`).join("")}
+        </select>
+        <select onchange="state.filterCat=this.value;render()">
+          <option value="">Todas as categorias</option>
+          ${state.categories.map(c => `<option value="${c.name}" ${state.filterCat===c.name?"selected":""}>${c.name}</option>`).join("")}
+        </select>
+        <select onchange="state.filterBank=this.value;render()">
+          <option value="">Todos os bancos</option>
+          ${state.banks.map(b => `<option value="${b.id}" ${String(state.filterBank)===String(b.id)?"selected":""}>${b.name}</option>`).join("")}
+        </select>
+        <select onchange="state.filterCard=this.value;render()">
+          <option value="">Todos os cartões</option>
+          ${state.cards.map(c => `<option value="${c.id}" ${String(state.filterCard)===String(c.id)?"selected":""}>${c.name}</option>`).join("")}
+        </select>
+      </div>
     </div>
+
     <div class="summary-cards">
       <div class="s-card"><div class="s-label">Receitas</div><div class="s-value green" style="font-size:18px">${fmt(inc)}</div></div>
       <div class="s-card"><div class="s-label">Gastos</div><div class="s-value red" style="font-size:18px">${fmt(exp)}</div></div>
       <div class="s-card"><div class="s-label">Saldo</div><div class="s-value ${inc-exp>=0?"green":"red"}" style="font-size:18px">${fmt(inc-exp)}</div></div>
     </div>
+
     <div class="section">
-      <div class="section-title">${txs.length} lançamento${txs.length!==1?"s":""}</div>
-      ${txs.map(tx => txRow(tx)).join("") || `<div class="empty">Nenhuma transação encontrada</div>`}
+      <div class="section-title">
+        ${txs.length} lançamento${txs.length!==1?"s":""}
+        <span style="font-size:12px;color:var(--text3);font-weight:400">
+          ${state.filterMonth ? state.filterMonth : "todos os meses"}
+        </span>
+      </div>
+      ${groupsHTML || `<div class="empty">Nenhuma transação encontrada</div>`}
     </div>
   `;
 }
@@ -1237,8 +1307,19 @@ async function saveTx() {
   }
 
   // Lançamento único
+  // Se tem cartão, aplica a mesma lógica de data das parcelas
+  let finalDate = date;
+  if (card_id) {
+    const card = state.cards.find(c => c.id === parseInt(card_id));
+    if (card && card.closing_day && card.due_day) {
+      finalDate = calcFirstInstallmentDate(date, card.closing_day, card.due_day);
+    }
+  }
+
   const { data, error } = await sb.from("transactions").insert([{
-    user_id: uid, type, description, amount, category, date, payment_method,
+    user_id: uid, type, description, amount, category,
+    date: finalDate,
+    payment_method,
     bank_id:  bank_id  ? parseInt(bank_id)  : null,
     card_id:  card_id  ? parseInt(card_id)  : null,
     installment_number: 1, installment_total: 1,
@@ -1467,6 +1548,246 @@ async function deleteCategory(id) {
 }
 
 
+
+// =====================
+// FATURAS
+// =====================
+function renderFaturas() {
+  if (state.cards.length === 0) {
+    document.getElementById("content").innerHTML = `
+      <div class="empty" style="padding:4rem">
+        Nenhum cartão cadastrado.<br>
+        <button class="btn btn-primary" style="margin-top:1rem" onclick="goTo('cartoes')">Cadastrar cartão</button>
+      </div>`;
+    return;
+  }
+
+  const now        = new Date();
+  const thisYear   = now.getFullYear();
+  const thisMonth  = now.getMonth(); // 0-indexed
+
+  // Gera os próximos 6 meses + mês atual
+  const faturaMonths = [];
+  for (let i = 0; i <= 5; i++) {
+    let m = thisMonth + i;
+    let y = thisYear;
+    if (m > 11) { m -= 12; y++; }
+    faturaMonths.push({ year: y, month: m });
+  }
+
+  // Calcula o total de cada fatura por cartão e mês
+  // Uma transação pertence à fatura do mês em que sua data cai
+  function getFaturaTotal(cardId, year, month) {
+    return state.transactions
+      .filter(t => {
+        if (Number(t.card_id) !== Number(cardId)) return false;
+        if (t.type !== "despesa") return false;
+        const d = new Date(t.date + "T00:00:00");
+        return d.getFullYear() === year && d.getMonth() === month;
+      })
+      .reduce((s, t) => s + parseFloat(t.amount), 0);
+  }
+
+  function getFaturaItems(cardId, year, month) {
+    return state.transactions.filter(t => {
+      if (Number(t.card_id) !== Number(cardId)) return false;
+      if (t.type !== "despesa") return false;
+      const d = new Date(t.date + "T00:00:00");
+      return d.getFullYear() === year && d.getMonth() === month;
+    });
+  }
+
+  function isInvoicePaid(cardId, year, month) {
+    const key = `${year}-${String(month+1).padStart(2,"0")}`;
+    return state.invoices.some(inv => Number(inv.card_id) === Number(cardId) && inv.month === key);
+  }
+
+  const bankOptions = state.banks.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+
+  const cardsHTML = state.cards.map(card => {
+    const color = card.color || "#7F77DD";
+    const r = parseInt(color.slice(1,3),16);
+    const g = parseInt(color.slice(3,5),16);
+    const b = parseInt(color.slice(5,7),16);
+
+    const monthsHTML = faturaMonths.map(({ year, month }) => {
+      const total   = getFaturaTotal(card.id, year, month);
+      const items   = getFaturaItems(card.id, year, month);
+      const paid    = isInvoicePaid(card.id, year, month);
+      const key     = `${year}-${String(month+1).padStart(2,"0")}`;
+      const isNow   = year === thisYear && month === thisMonth;
+      const monthName = new Date(year, month, 1).toLocaleString("pt-BR", { month: "long", year: "numeric" });
+
+      if (total === 0 && !paid) return "";
+
+      return `
+        <div style="border:1px solid ${paid ? "var(--border)" : (isNow ? color : "var(--border)")};border-radius:10px;padding:1rem;margin-bottom:10px;opacity:${paid?".6":"1"}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${items.length?"10px":"0"}">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:13px;font-weight:600;color:var(--text);text-transform:capitalize">${monthName}</span>
+              ${isNow ? `<span style="font-size:11px;background:${color};color:#fff;padding:2px 8px;border-radius:99px">Atual</span>` : ""}
+              ${paid  ? `<span style="font-size:11px;background:var(--bg3);color:var(--green);padding:2px 8px;border-radius:99px">Paga</span>` : ""}
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:16px;font-weight:700;color:${paid?"var(--text3)":"var(--red)"}">
+                ${fmt(total)}
+              </span>
+              ${!paid && total > 0 ? `
+                <button class="btn btn-sm btn-primary" onclick="openPayInvoice('${card.id}','${key}','${total}')">
+                  Pagar fatura
+                </button>` : ""}
+            </div>
+          </div>
+          ${items.length ? `
+            <div style="border-top:1px solid var(--border);padding-top:8px">
+              ${items.slice(0, 5).map(t => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px;border-bottom:1px solid var(--bg3)">
+                  <div style="min-width:0;flex:1">
+                    <span style="color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">${t.description}</span>
+                    <span style="color:var(--text3)">${new Date(t.date+"T00:00:00").toLocaleDateString("pt-BR")}
+                      ${t.installment_total > 1 ? `· ${t.installment_number}/${t.installment_total}x` : ""}
+                    </span>
+                  </div>
+                  <span style="color:var(--red);font-weight:600;margin-left:12px;white-space:nowrap">${fmt(t.amount)}</span>
+                </div>
+              `).join("")}
+              ${items.length > 5 ? `<div style="font-size:11px;color:var(--text3);padding-top:6px;text-align:center">+ ${items.length-5} lançamento(s)</div>` : ""}
+            </div>
+          ` : ""}
+        </div>
+      `;
+    }).join("");
+
+    const totalAberto = faturaMonths.reduce((s, {year, month}) => {
+      if (isInvoicePaid(card.id, year, month)) return s;
+      return s + getFaturaTotal(card.id, year, month);
+    }, 0);
+
+    return `
+      <div class="section" style="border-top:4px solid ${color}">
+        <div class="section-title">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:12px;height:12px;border-radius:50%;background:${color}"></div>
+            <span>${card.name}</span>
+            <span style="font-size:11px;color:var(--text3);font-weight:400">${card.type} · Fecha dia ${card.closing_day||"?"} · Vence dia ${card.due_day||"?"}</span>
+          </div>
+          <span style="font-size:13px;color:var(--red);font-weight:600">Em aberto: ${fmt(totalAberto)}</span>
+        </div>
+        ${monthsHTML || `<div class="empty" style="padding:1rem">Nenhuma compra nos próximos meses</div>`}
+      </div>
+    `;
+  }).join("");
+
+  document.getElementById("content").innerHTML = `
+    ${cardsHTML}
+
+    ${state.invoices.length ? `
+    <div class="section">
+      <div class="section-title">Histórico de faturas pagas</div>
+      ${state.invoices.slice(0,10).map(inv => {
+        const card = state.cards.find(c => Number(c.id) === Number(inv.card_id));
+        const bank = state.banks.find(b => Number(b.id) === Number(inv.bank_id));
+        const [y, m] = inv.month.split("-");
+        const monthName = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+        return `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--bg3);font-size:13px">
+            <div>
+              <span style="font-weight:500;color:var(--text)">${card?.name || "Cartão"}</span>
+              <span style="color:var(--text3);margin-left:8px;text-transform:capitalize">${monthName}</span>
+              ${bank ? `<span style="color:var(--text3);margin-left:8px">· ${bank.name}</span>` : ""}
+            </div>
+            <span style="font-weight:600;color:var(--green)">${fmt(inv.amount)}</span>
+          </div>
+        `;
+      }).join("")}
+    </div>` : ""}
+
+    <!-- Modal pagar fatura -->
+    <div id="pay-invoice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center;padding:1rem">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:1.5rem;width:100%;max-width:400px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
+          <span style="font-size:15px;font-weight:600;color:var(--text)">Pagar fatura</span>
+          <button class="btn-icon" onclick="closePayInvoice()">✕</button>
+        </div>
+        <div id="pay-invoice-info" style="background:var(--bg3);border-radius:8px;padding:12px;margin-bottom:1rem;font-size:13px;color:var(--text2)"></div>
+        <div class="form-group">
+          <label>Débitar do banco (opcional)</label>
+          <select id="pay-invoice-bank">
+            <option value="">-- não debitar --</option>
+            ${bankOptions}
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
+          <button class="btn btn-secondary" onclick="closePayInvoice()">Cancelar</button>
+          <button class="btn btn-primary" onclick="confirmPayInvoice()">Confirmar pagamento</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+let _payInvoiceData = null;
+
+function openPayInvoice(cardId, month, amount) {
+  _payInvoiceData = { cardId: parseInt(cardId), month, amount: parseFloat(amount) };
+  const card = state.cards.find(c => Number(c.id) === parseInt(cardId));
+  const [y, m] = month.split("-");
+  const monthName = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+  document.getElementById("pay-invoice-info").innerHTML = `
+    <div style="margin-bottom:4px"><strong style="color:var(--text)">${card?.name}</strong> — <span style="text-transform:capitalize">${monthName}</span></div>
+    <div style="font-size:16px;font-weight:700;color:var(--red)">${fmt(parseFloat(amount))}</div>
+  `;
+  const modal = document.getElementById("pay-invoice-modal");
+  modal.style.display = "flex";
+}
+
+function closePayInvoice() {
+  document.getElementById("pay-invoice-modal").style.display = "none";
+  _payInvoiceData = null;
+}
+
+async function confirmPayInvoice() {
+  if (!_payInvoiceData) return;
+  const { cardId, month, amount } = _payInvoiceData;
+  const bankId = document.getElementById("pay-invoice-bank").value || null;
+  const uid    = state.userId;
+
+  // Registra a fatura como paga
+  const { data: inv, error: invErr } = await sb.from("invoices").insert([{
+    user_id: uid,
+    card_id: cardId,
+    month,
+    amount,
+    bank_id: bankId ? parseInt(bankId) : null,
+  }]).select().single();
+
+  if (invErr) { alert("Erro ao registrar fatura: " + invErr.message); return; }
+  state.invoices.unshift(inv);
+
+  // Se escolheu banco, debita o valor
+  if (bankId) {
+    const card = state.cards.find(c => c.id === cardId);
+    const [y, m] = month.split("-");
+    const monthName = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+    const { data: tx } = await sb.from("transactions").insert([{
+      user_id:     uid,
+      type:        "despesa",
+      description: `Pagamento fatura ${card?.name} — ${monthName}`,
+      amount,
+      date:        today(),
+      bank_id:     parseInt(bankId),
+      card_id:     null,
+      category:    null,
+      payment_method: "PIX",
+      installment_number: 1,
+      installment_total:  1,
+    }]).select().single();
+    if (tx) state.transactions.unshift(tx);
+  }
+
+  closePayInvoice();
+  render();
+}
 // =====================
 // RELATÓRIOS
 // =====================
