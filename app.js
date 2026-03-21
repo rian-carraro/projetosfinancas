@@ -387,11 +387,16 @@ function renderDashboard() {
     </div>
   ` : "";
 
+  const isDark    = !document.body.classList.contains("light-mode");
+  const selBg     = isDark ? "#16181f" : "#ffffff";
+  const selColor  = isDark ? "#e8e8e8" : "#1a1a2e";
+  const selBorder = isDark ? "#2a2d3a" : "#e0e0e8";
+
   const monthSelectorHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
       <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:13px;color:var(--text3)">Exibindo:</span>
-        <select onchange="state.dashMonth=this.value;render()" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:6px 28px 6px 10px;font-size:13px;font-weight:600;color:var(--text);appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 12 12%22%3E%3Cpath fill=%22%236b6d80%22 d=%22M6 8L1 3h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 8px center;cursor:pointer;outline:none;transition:border-color .15s" onfocus="this.style.borderColor='var(--purple)'" onblur="this.style.borderColor='var(--border)'">
+        <span style="font-size:13px;color:#888">Exibindo:</span>
+        <select onchange="state.dashMonth=this.value;render()" style="background:${selBg};border:1px solid ${selBorder};border-radius:8px;padding:7px 32px 7px 12px;font-size:13px;font-weight:600;color:${selColor};appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 10 10%22%3E%3Cpath fill=%22%237F77DD%22 d=%22M5 7L0 2h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;cursor:pointer;font-family:inherit;height:36px;outline:none">
           ${availableMonths.map(ym => `<option value="${ym}" ${state.dashMonth===ym?"selected":""}>${monthLabel(ym)}${ym===currentYM?" (atual)":""}</option>`).join("")}
         </select>
       </div>
@@ -475,7 +480,7 @@ function renderDashboard() {
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:1rem">
         <div style="flex:1;min-width:200px">
           <div style="font-size:12px;color:#666;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Selecione o mês</div>
-          <select id="report-month" style="width:100%;background:#0f1117;border:1px solid #2a2d3a;border-radius:8px;padding:8px 30px 8px 10px;font-size:13px;color:#e8e8e8;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b6d80' d='M6 8L1 3h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center">
+          <select id="report-month" style="width:100%;background:${selBg};border:1px solid ${selBorder};border-radius:8px;padding:8px 30px 8px 10px;font-size:13px;color:${selColor};appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 10 10%22%3E%3Cpath fill=%22%237F77DD%22 d=%22M5 7L0 2h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;font-family:inherit;height:38px;outline:none;cursor:pointer">
             ${[...new Set(txs.map(t => t.date.substring(0,7)))].sort().reverse().map(m => {
               const [y, mo] = m.split("-");
               const label = new Date(parseInt(y), parseInt(mo)-1, 1).toLocaleString("pt-BR", {month:"long", year:"numeric"});
@@ -846,7 +851,7 @@ function renderCartoes() {
         <div class="form-group">
           <label>Cor do cartão</label>
           <div style="display:flex;align-items:center;gap:8px">
-            <input autocomplete="off" type="color" id="c-color" value="#7F77DD" style="width:40px;height:36px;padding:2px;border-radius:8px;border:1px solid #2a2d3a;background:#0f1117;cursor:pointer">
+            <input type="color" id="c-color" value="#7F77DD" style="width:40px;height:36px;padding:2px;border-radius:8px;border:1px solid #2a2d3a;background:#0f1117;cursor:pointer">
             <span id="c-color-label" style="font-size:12px;color:#666">#7F77DD</span>
           </div>
         </div>
@@ -1075,7 +1080,7 @@ function renderBoletos() {
             <span style="background:#7F77DD;color:#fff;padding:4px 12px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap">Escolher arquivo</span>
             <span id="bol-file-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Nenhum arquivo selecionado</span>
           </label>
-          <input autocomplete="off" id="bol-file" type="file" accept=".pdf,image/*" style="display:none" onchange="document.getElementById('bol-file-name').textContent = this.files[0]?.name || 'Nenhum arquivo selecionado'">
+          <input id="bol-file" type="file" accept=".pdf,image/*" style="display:none" onchange="document.getElementById('bol-file-name').textContent = this.files[0]?.name || 'Nenhum arquivo selecionado'">
         </div>
       </div>
       <div class="form-actions">
