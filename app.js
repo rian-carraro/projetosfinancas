@@ -816,7 +816,10 @@ function renderBancos() {
               <div class="bank-card">
                 <div class="bank-card-header">
                   <div class="bank-card-name">${b.name}</div>
-                  <button class="btn-icon" onclick="deleteBank(${b.id})">✕</button>
+                  <div style="display:flex;gap:4px">
+                    <button class="btn-icon" onclick="editBank(${b.id})" title="Editar" style="color:#7F77DD;font-size:13px">✎</button>
+                    <button class="btn-icon" onclick="deleteBank(${b.id})" title="Excluir">✕</button>
+                  </div>
                 </div>
                 <div class="bank-card-label">Saldo atual</div>
                 <div class="bank-card-balance ${bal>=0?"green":"red"}">${fmt(bal)}</div>
@@ -899,7 +902,10 @@ function renderCartoes() {
                   ${c.due_day     ? " · Vence dia " + c.due_day     : ""}
                 </div>
               </div>
-              <button class="btn-icon" onclick="deleteCard(${c.id})">✕</button>
+              <div style="display:flex;gap:4px">
+                <button class="btn-icon" onclick="editCard(${c.id})" title="Editar" style="color:#7F77DD;font-size:13px">✎</button>
+                <button class="btn-icon" onclick="deleteCard(${c.id})" title="Excluir">✕</button>
+              </div>
             </div>
           `).join("")}
         </div>
@@ -984,7 +990,8 @@ function renderContasFixas() {
           </div>
           <div style="display:flex;align-items:center;gap:10px">
             <span style="font-size:14px;font-weight:600;color:#D85A30">${fmt(f.amount)}</span>
-            <button class="btn-icon" onclick="deleteFixed(${f.id})">✕</button>
+            <button class="btn-icon" onclick="editFixed(${f.id})" title="Editar" style="color:#7F77DD;font-size:13px">✎</button>
+            <button class="btn-icon" onclick="deleteFixed(${f.id})" title="Excluir">✕</button>
           </div>
         </div>
       `).join("") || `<div class="empty">Nenhuma conta fixa cadastrada</div>`}
@@ -1042,6 +1049,7 @@ function renderMetas() {
                 ? `<button class="btn btn-secondary btn-sm" onclick="promptDeposit(${g.id})">+ Depositar</button>`
                 : `<span style="color:#1D9E75;font-size:12px;font-weight:500">Concluída!</span>`
               }
+              <button class="btn btn-secondary btn-sm" onclick="editGoal(${g.id})">Editar</button>
               <button class="btn btn-danger btn-sm" onclick="deleteGoal(${g.id})">Excluir</button>
             </div>
           </div>
@@ -1143,6 +1151,7 @@ function boletoRow(b, status) {
         <div style="display:flex;gap:6px">
           ${b.file_path ? `<button class="btn btn-secondary btn-sm" onclick="downloadBoleto('${b.file_path}','${b.id}')">Abrir arquivo</button>` : ""}
           ${b.barcode ? `<button class="btn btn-secondary btn-sm" onclick="copyBarcode('${b.barcode}')">Copiar código</button>` : ""}
+          <button class="btn btn-secondary btn-sm" onclick="editBoleto(${b.id})">Editar</button>
           <button class="btn btn-primary btn-sm" onclick="markBoletoAsPaid(${b.id})">Pago</button>
         </div>
       </div>
@@ -1256,7 +1265,8 @@ function renderCategorias() {
               <div style="width:9px;height:9px;border-radius:50%;background:${CAT_COLORS[i%CAT_COLORS.length]};flex-shrink:0"></div>
               <span style="font-size:13px">${cat.name}</span>
             </div>
-            <button class="btn-icon" onclick="deleteCategory(${cat.id})">✕</button>
+            <button class="btn-icon" onclick="editCategory(${cat.id})" title="Editar" style="color:#7F77DD;font-size:13px">✎</button>
+            <button class="btn-icon" onclick="deleteCategory(${cat.id})" title="Excluir">✕</button>
           </div>
         `).join("")}
       </div>
@@ -1290,7 +1300,8 @@ function txRow(tx) {
       <span class="tx-amount ${tx.type==="receita"?"green":"red"}">
         ${tx.type==="receita"?"+":"-"}${fmt(tx.amount)}
       </span>
-      <button class="btn-icon" onclick="deleteTx(${tx.id})">✕</button>
+      <button class="btn-icon" onclick="editTx(${tx.id})" title="Editar" style="color:#7F77DD;font-size:13px">✎</button>
+      <button class="btn-icon" onclick="deleteTx(${tx.id})" title="Excluir">✕</button>
     </div>
   `;
 }
@@ -1644,10 +1655,10 @@ function renderFaturas() {
   const cardsHTML = state.cards.map(card => {
     const color = card.color || "#7F77DD";
 
-    const totalAberto = faturaMonths.reduce((s, {year, month}) => {
-      if (isInvoicePaid(card.id, year, month)) return s;
-      return s + getFaturaTotal(card.id, year, month);
-    }, 0);
+    // Mostra só o total do mês atual em aberto
+    const currentFaturaTotal = isInvoicePaid(card.id, thisYear, thisMonth)
+      ? 0
+      : getFaturaTotal(card.id, thisYear, thisMonth);
 
     const rowsHTML = faturaMonths.map(({ year, month }) => {
       const total     = getFaturaTotal(card.id, year, month);
@@ -1688,7 +1699,7 @@ function renderFaturas() {
             <span>${card.name}</span>
             <span style="font-size:11px;color:var(--text3);font-weight:400">${card.type} · Fecha dia ${card.closing_day||"?"} · Vence dia ${card.due_day||"?"}</span>
           </div>
-          <span style="font-size:13px;color:var(--red);font-weight:600">Em aberto: ${fmt(totalAberto)}</span>
+          <span style="font-size:13px;color:var(--red);font-weight:600">Em aberto (mês atual): ${fmt(currentFaturaTotal)}</span>
         </div>
         ${rowsHTML || `<div class="empty" style="padding:.5rem">Nenhuma compra nos próximos meses</div>`}
       </div>
@@ -1713,7 +1724,10 @@ function renderFaturas() {
               <span style="color:var(--text3);margin-left:8px;text-transform:capitalize">${monthName}</span>
               ${bank ? `<span style="color:var(--text3);margin-left:8px">· ${bank.name}</span>` : ""}
             </div>
-            <span style="font-weight:600;color:var(--green)">${fmt(inv.amount)}</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-weight:600;color:var(--green)">${fmt(inv.amount)}</span>
+              <button class="btn btn-secondary btn-sm" onclick="undoInvoice(${inv.id})" title="Desfazer pagamento">Desfazer</button>
+            </div>
           </div>
         `;
       }).join("")}
@@ -2170,6 +2184,304 @@ function exportXLSXCards() {
 
   XLSX.writeFile(wb, `cartoes-${month}.xlsx`);
 }
+
+// =====================
+// MODAL DE EDIÇÃO GENÉRICO
+// =====================
+function openEditModal(title, fields, onSave) {
+  // Remove modal anterior se existir
+  const existing = document.getElementById("edit-modal");
+  if (existing) existing.remove();
+
+  const isDark    = !document.body.classList.contains("light-mode");
+  const bg2       = isDark ? "#16181f" : "#ffffff";
+  const bgInput   = isDark ? "#0f1117" : "#f4f5f7";
+  const border    = isDark ? "#2a2d3a" : "#e0e0e8";
+  const textColor = isDark ? "#e8e8e8" : "#1a1a2e";
+  const labelColor= isDark ? "#666"    : "#888";
+
+  const fieldsHTML = fields.map(f => {
+    const id = "edit-field-" + f.key;
+    let input = "";
+
+    if (f.type === "select") {
+      input = `<select id="${id}" style="background:${bgInput};border:1px solid ${border};border-radius:8px;padding:8px 30px 8px 10px;font-size:13px;color:${textColor};width:100%;appearance:none;outline:none;font-family:inherit;height:38px">
+        ${f.options.map(o => `<option value="${o.value}" ${String(f.value)===String(o.value)?"selected":""}>${o.label}</option>`).join("")}
+      </select>`;
+    } else if (f.type === "currency") {
+      const fmtVal = f.value ? Number(f.value).toLocaleString("pt-BR", { style:"currency", currency:"BRL" }) : "";
+      input = `<input autocomplete="off" id="${id}" type="text" inputmode="numeric" value="${fmtVal}" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)" style="background:${bgInput};border:1px solid ${border};border-radius:8px;padding:8px 12px;font-size:13px;color:${textColor};width:100%;outline:none;font-family:inherit;height:38px">`;
+    } else if (f.type === "color") {
+      input = `<div style="display:flex;align-items:center;gap:10px">
+        <input autocomplete="off" type="color" id="${id}" value="${f.value||"#7F77DD"}" style="width:40px;height:38px;padding:2px;border-radius:8px;border:1px solid ${border};background:${bgInput};cursor:pointer">
+        <span style="font-size:12px;color:${labelColor}">${f.value||"#7F77DD"}</span>
+      </div>`;
+    } else if (f.type === "date") {
+      input = `<input autocomplete="off" id="${id}" type="date" value="${f.value||""}" style="background:${bgInput};border:1px solid ${border};border-radius:8px;padding:8px 12px;font-size:13px;color:${textColor};width:100%;outline:none;font-family:inherit;height:38px">`;
+    } else if (f.type === "number") {
+      input = `<input autocomplete="off" id="${id}" type="text" inputmode="numeric" value="${f.value||""}" placeholder="${f.placeholder||""}" oninput="this.value=this.value.replace(/\D/g,'')" style="background:${bgInput};border:1px solid ${border};border-radius:8px;padding:8px 12px;font-size:13px;color:${textColor};width:100%;outline:none;font-family:inherit;height:38px">`;
+    } else {
+      input = `<input autocomplete="off" id="${id}" type="text" value="${f.value||""}" placeholder="${f.placeholder||""}" style="background:${bgInput};border:1px solid ${border};border-radius:8px;padding:8px 12px;font-size:13px;color:${textColor};width:100%;outline:none;font-family:inherit;height:38px">`;
+    }
+
+    return `
+      <div style="margin-bottom:12px">
+        <label style="display:block;font-size:11px;color:${labelColor};text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">${f.label}</label>
+        ${input}
+      </div>
+    `;
+  }).join("");
+
+  const modal = document.createElement("div");
+  modal.id = "edit-modal";
+  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center;padding:1rem";
+  modal.innerHTML = `
+    <div style="background:${bg2};border:1px solid ${border};border-radius:16px;padding:1.5rem;width:100%;max-width:460px;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
+        <span style="font-size:15px;font-weight:600;color:${textColor}">${title}</span>
+        <button onclick="closeEditModal()" style="background:none;border:none;cursor:pointer;font-size:18px;color:#666">✕</button>
+      </div>
+      ${fieldsHTML}
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
+        <button onclick="closeEditModal()" class="btn btn-secondary">Cancelar</button>
+        <button onclick="(${onSave.toString()})()" class="btn btn-primary">Salvar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) closeEditModal(); });
+}
+
+function closeEditModal() {
+  const m = document.getElementById("edit-modal");
+  if (m) m.remove();
+}
+
+function getEditField(key) {
+  return document.getElementById("edit-field-" + key);
+}
+
+// =====================
+// EDITAR TRANSAÇÃO
+// =====================
+function editTx(id) {
+  const tx  = state.transactions.find(t => t.id === id);
+  if (!tx) return;
+  const catOptions  = state.categories.map(c => ({ value: c.name, label: c.name }));
+  const bankOptions = [{ value: "", label: "-- nenhum --" }, ...state.banks.map(b => ({ value: b.id, label: b.name }))];
+  const cardOptions = [{ value: "", label: "-- nenhum --" }, ...state.cards.map(c => ({ value: c.id, label: c.name }))];
+  const methOptions = [{ value: "", label: "-- nenhum --" }, ...METHODS.map(m => ({ value: m, label: m }))];
+
+  openEditModal("Editar transação", [
+    { key: "type",    label: "Tipo",        type: "select",   value: tx.type,            options: [{value:"despesa",label:"Despesa"},{value:"receita",label:"Receita"}] },
+    { key: "desc",    label: "Descrição",   type: "text",     value: tx.description,     placeholder: "Descrição" },
+    { key: "amount",  label: "Valor (R$)",  type: "currency", value: tx.amount },
+    { key: "date",    label: "Data",        type: "date",     value: tx.date },
+    { key: "cat",     label: "Categoria",   type: "select",   value: tx.category||"",    options: [{value:"",label:"-- nenhuma --"}, ...catOptions] },
+    { key: "bank",    label: "Banco",       type: "select",   value: tx.bank_id||"",     options: bankOptions },
+    { key: "method",  label: "Método",      type: "select",   value: tx.payment_method||"", options: methOptions },
+    { key: "card",    label: "Cartão",      type: "select",   value: tx.card_id||"",     options: cardOptions },
+  ], async function() {
+    const updates = {
+      type:           getEditField("type").value,
+      description:    getEditField("desc").value.trim(),
+      amount:         parseCurrency(getEditField("amount").value),
+      date:           getEditField("date").value,
+      category:       getEditField("cat").value    || null,
+      bank_id:        getEditField("bank").value   ? parseInt(getEditField("bank").value)   : null,
+      payment_method: getEditField("method").value || null,
+      card_id:        getEditField("card").value   ? parseInt(getEditField("card").value)   : null,
+    };
+    if (!updates.description || !updates.amount || !updates.date) return alert("Preencha descrição, valor e data.");
+    const { error } = await sb.from("transactions").update(updates).eq("id", id).eq("user_id", state.userId);
+    if (!error) {
+      Object.assign(state.transactions.find(t => t.id === id), updates);
+      closeEditModal(); render();
+    } else alert("Erro: " + error.message);
+  });
+}
+
+// =====================
+// EDITAR BANCO
+// =====================
+function editBank(id) {
+  const b = state.banks.find(x => x.id === id);
+  if (!b) return;
+  openEditModal("Editar banco", [
+    { key: "name",    label: "Nome",          type: "text",     value: b.name },
+    { key: "balance", label: "Saldo inicial", type: "currency", value: b.initial_balance },
+  ], async function() {
+    const updates = {
+      name:            getEditField("name").value.trim(),
+      initial_balance: parseCurrency(getEditField("balance").value),
+    };
+    if (!updates.name) return alert("Informe o nome.");
+    const { error } = await sb.from("banks").update(updates).eq("id", id).eq("user_id", state.userId);
+    if (!error) { Object.assign(state.banks.find(x => x.id === id), updates); closeEditModal(); render(); }
+    else alert("Erro: " + error.message);
+  });
+}
+
+// =====================
+// EDITAR CARTÃO
+// =====================
+function editCard(id) {
+  const c = state.cards.find(x => x.id === id);
+  if (!c) return;
+  openEditModal("Editar cartão", [
+    { key: "name",    label: "Nome",              type: "text",     value: c.name },
+    { key: "type",    label: "Tipo",              type: "select",   value: c.type, options: [{value:"credito",label:"Crédito"},{value:"debito",label:"Débito"},{value:"pix",label:"PIX"},{value:"dinheiro",label:"Dinheiro"}] },
+    { key: "color",   label: "Cor",               type: "color",    value: c.color || "#7F77DD" },
+    { key: "limit",   label: "Limite (R$)",       type: "currency", value: c.limit_amount },
+    { key: "closing", label: "Fechamento (dia)",  type: "number",   value: c.closing_day, placeholder: "Ex: 28" },
+    { key: "due",     label: "Vencimento (dia)",  type: "number",   value: c.due_day,     placeholder: "Ex: 5"  },
+  ], async function() {
+    const updates = {
+      name:          getEditField("name").value.trim(),
+      type:          getEditField("type").value,
+      color:         getEditField("color").value,
+      limit_amount:  parseCurrency(getEditField("limit").value) || 0,
+      closing_day:   parseInt(getEditField("closing").value) || null,
+      due_day:       parseInt(getEditField("due").value)     || null,
+    };
+    if (!updates.name) return alert("Informe o nome.");
+    const { error } = await sb.from("cards").update(updates).eq("id", id).eq("user_id", state.userId);
+    if (!error) { Object.assign(state.cards.find(x => x.id === id), updates); closeEditModal(); render(); }
+    else alert("Erro: " + error.message);
+  });
+}
+
+// =====================
+// EDITAR CONTA FIXA
+// =====================
+function editFixed(id) {
+  const f = state.fixed.find(x => x.id === id);
+  if (!f) return;
+  const catOptions  = [{ value:"", label:"-- nenhuma --" }, ...state.categories.map(c => ({ value: c.name, label: c.name }))];
+  const methOptions = [{ value:"", label:"-- nenhum --"  }, ...METHODS.map(m => ({ value: m, label: m }))];
+  openEditModal("Editar conta fixa", [
+    { key: "desc",   label: "Descrição",          type: "text",     value: f.description },
+    { key: "amount", label: "Valor (R$)",          type: "currency", value: f.amount },
+    { key: "due",    label: "Vencimento (dia)",    type: "number",   value: f.due_day, placeholder: "Ex: 10" },
+    { key: "cat",    label: "Categoria",           type: "select",   value: f.category||"",       options: catOptions  },
+    { key: "method", label: "Método de pagamento", type: "select",   value: f.payment_method||"", options: methOptions },
+  ], async function() {
+    const updates = {
+      description:    getEditField("desc").value.trim(),
+      amount:         parseCurrency(getEditField("amount").value),
+      due_day:        parseInt(getEditField("due").value) || null,
+      category:       getEditField("cat").value    || null,
+      payment_method: getEditField("method").value || null,
+    };
+    if (!updates.description || !updates.amount) return alert("Informe descrição e valor.");
+    const { error } = await sb.from("fixed_expenses").update(updates).eq("id", id).eq("user_id", state.userId);
+    if (!error) { Object.assign(state.fixed.find(x => x.id === id), updates); closeEditModal(); render(); }
+    else alert("Erro: " + error.message);
+  });
+}
+
+// =====================
+// EDITAR META
+// =====================
+function editGoal(id) {
+  const g = state.goals.find(x => x.id === id);
+  if (!g) return;
+  const bankOptions = [{ value:"", label:"-- nenhum --" }, ...state.banks.map(b => ({ value: b.id, label: b.name }))];
+  openEditModal("Editar meta", [
+    { key: "name",   label: "Nome",           type: "text",     value: g.name },
+    { key: "target", label: "Valor alvo (R$)", type: "currency", value: g.target },
+    { key: "saved",  label: "Guardado (R$)",  type: "currency", value: g.saved },
+    { key: "bank",   label: "Banco vinculado", type: "select",   value: g.bank_id||"", options: bankOptions },
+  ], async function() {
+    const updates = {
+      name:    getEditField("name").value.trim(),
+      target:  parseCurrency(getEditField("target").value),
+      saved:   parseCurrency(getEditField("saved").value),
+      bank_id: getEditField("bank").value ? parseInt(getEditField("bank").value) : null,
+    };
+    if (!updates.name || !updates.target) return alert("Informe nome e valor alvo.");
+    const { error } = await sb.from("goals").update(updates).eq("id", id).eq("user_id", state.userId);
+    if (!error) { Object.assign(state.goals.find(x => x.id === id), updates); closeEditModal(); render(); }
+    else alert("Erro: " + error.message);
+  });
+}
+
+// =====================
+// EDITAR BOLETO
+// =====================
+function editBoleto(id) {
+  const b = state.boletos.find(x => x.id === id);
+  if (!b) return;
+  openEditModal("Editar boleto", [
+    { key: "desc",    label: "Descrição",   type: "text",     value: b.description },
+    { key: "amount",  label: "Valor (R$)",  type: "currency", value: b.amount },
+    { key: "date",    label: "Vencimento",  type: "date",     value: b.due_date },
+    { key: "barcode", label: "Código de barras", type: "text", value: b.barcode||"", placeholder: "Opcional" },
+  ], async function() {
+    const updates = {
+      description: getEditField("desc").value.trim(),
+      amount:      parseCurrency(getEditField("amount").value),
+      due_date:    getEditField("date").value,
+      barcode:     getEditField("barcode").value.trim() || null,
+    };
+    if (!updates.description || !updates.amount || !updates.due_date) return alert("Preencha todos os campos obrigatórios.");
+    const { error } = await sb.from("boletos").update(updates).eq("id", id).eq("user_id", state.userId);
+    if (!error) { Object.assign(state.boletos.find(x => x.id === id), updates); closeEditModal(); render(); }
+    else alert("Erro: " + error.message);
+  });
+}
+
+// =====================
+// EDITAR CATEGORIA
+// =====================
+function editCategory(id) {
+  const c = state.categories.find(x => x.id === id);
+  if (!c) return;
+  openEditModal("Editar categoria", [
+    { key: "name", label: "Nome", type: "text", value: c.name },
+  ], async function() {
+    const name = getEditField("name").value.trim();
+    if (!name) return alert("Informe o nome.");
+    const { error } = await sb.from("categories").update({ name }).eq("id", id).eq("user_id", state.userId);
+    if (!error) { state.categories.find(x => x.id === id).name = name; closeEditModal(); render(); }
+    else alert("Erro: " + error.message);
+  });
+}
+
+// =====================
+// DESFAZER PAGAMENTO DE FATURA
+// =====================
+async function undoInvoice(id) {
+  if (!confirm("Desfazer este pagamento de fatura?")) return;
+  const inv = state.invoices.find(x => x.id === id);
+  if (!inv) return;
+
+  // Remove a transação de débito que foi gerada no banco (se existir)
+  if (inv.bank_id) {
+    const card = state.cards.find(c => Number(c.id) === Number(inv.card_id));
+    const [y, m] = inv.month.split("-");
+    const monthName = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+    const descricao = `Pagamento fatura ${card?.name} — ${monthName}`;
+    // Busca e remove a transação de débito correspondente
+    const related = state.transactions.find(t =>
+      t.description === descricao &&
+      Number(t.bank_id) === Number(inv.bank_id) &&
+      t.type === "despesa"
+    );
+    if (related) {
+      await sb.from("transactions").delete().eq("id", related.id);
+      state.transactions = state.transactions.filter(t => t.id !== related.id);
+    }
+  }
+
+  // Remove o registro da fatura paga
+  const { error } = await sb.from("invoices").delete().eq("id", id).eq("user_id", state.userId);
+  if (!error) {
+    state.invoices = state.invoices.filter(x => x.id !== id);
+    render();
+  } else alert("Erro ao desfazer: " + error.message);
+}
+
 // =====================
 // THEME
 // =====================
