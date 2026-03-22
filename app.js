@@ -225,6 +225,7 @@ function resetState() {
   state.cards        = [];
   state.fixed        = [];
   state.banks        = [];
+  state.bank_transfers = [];
   state.boletos      = [];
   state.invoices     = [];
   state.dashMonth    = "";
@@ -253,12 +254,20 @@ async function loadData() {
     state.fixed        = r5.data || [];
     state.banks        = r6.data || [];
 
-    // Boletos separado — não quebra o app se a tabela tiver problema
+    // Boletos
     try {
       const r7 = await sb.from("boletos").select("*").eq("user_id", uid).eq("paid", false).order("due_date");
       state.boletos = r7.data || [];
     } catch (e) {
       state.boletos = [];
+    }
+
+    // Transferências bancárias
+    try {
+      const r8 = await sb.from("bank_transfers").select("*").eq("user_id", uid).order("date", { ascending: false });
+      state.bank_transfers = r8.data || [];
+    } catch (e) {
+      state.bank_transfers = [];
     }
 
     // Faturas pagas
@@ -284,7 +293,11 @@ function bankBalance(bank) {
   const txs = state.transactions.filter(t => Number(t.bank_id) === bankId);
   const inc  = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
   const exp  = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
-  return parseFloat(bank.initial_balance) + inc - exp;
+  // Soma depósitos e saques internos (não entram como receita/despesa)
+  const transfers = (state.bank_transfers || []).filter(t => Number(t.bank_id) === bankId);
+  const dep = transfers.filter(t => t.type === "deposito").reduce((s, t) => s + parseFloat(t.amount), 0);
+  const saq = transfers.filter(t => t.type === "saque").reduce((s, t) => s + parseFloat(t.amount), 0);
+  return parseFloat(bank.initial_balance) + inc - exp + dep - saq;
 }
 
 // =====================
@@ -788,23 +801,85 @@ function renderMovimentacoes() {
 function renderBancos() {
   const totalBalance = state.banks.reduce((s, b) => s + bankBalance(b), 0);
   document.getElementById("content").innerHTML = `
-    <div class="section">
-      <div class="section-title">Novo Banco / Conta</div>
-      <div class="form-grid">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1.2rem">
+      <div class="section" style="margin-bottom:0">
+        <div class="section-title">Novo Banco / Conta</div>
         <div class="form-group">
           <label>Nome *</label>
-          <input autocomplete="off" id="b-name" placeholder="Ex: Nubank, Itaú, Carteira..." autocomplete="off">
+          <input autocomplete="off" id="b-name" placeholder="Ex: Nubank, Itaú, Carteira...">
         </div>
         <div class="form-group">
           <label>Saldo inicial (R$)</label>
           <input autocomplete="off" id="b-balance" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
         </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="saveBank()">Salvar Banco</button>
+          <button class="btn btn-secondary" onclick="clearBankForm()">Limpar</button>
+        </div>
       </div>
-      <div class="form-actions">
-        <button class="btn btn-primary" onclick="saveBank()">Salvar Banco</button>
-        <button class="btn btn-secondary" onclick="clearBankForm()">Limpar</button>
+
+      <div class="section" style="margin-bottom:0">
+        <div class="section-title">Depósito / Saque</div>
+        <div class="form-group">
+          <label>Tipo *</label>
+          <select id="bt-type">
+            <option value="deposito">Depósito</option>
+            <option value="saque">Saque</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Banco *</label>
+          <select id="bt-bank">
+            <option value="">-- selecione --</option>
+            ${state.banks.map(b => `<option value="${b.id}">${b.name} · saldo: ${fmt(bankBalance(b))}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Valor (R$) *</label>
+          <input autocomplete="off" id="bt-amount" type="text" inputmode="numeric" placeholder="R$ 0,00" oninput="formatCurrencyInput(this)">
+        </div>
+        <div class="form-group">
+          <label>Descrição (opcional)</label>
+          <input autocomplete="off" id="bt-desc" placeholder="Ex: Salário, Retirada...">
+        </div>
+        <div class="form-group">
+          <label>Data</label>
+          <input autocomplete="off" id="bt-date" type="date" value="${today()}">
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="saveBankTransfer()">Confirmar</button>
+          <button class="btn btn-secondary" onclick="clearBankTransferForm()">Limpar</button>
+        </div>
       </div>
     </div>
+    </div>
+
+    ${(state.bank_transfers||[]).length ? `
+    <div class="section">
+      <div class="section-title">Últimas movimentações internas</div>
+      ${(state.bank_transfers||[]).slice(0,8).map(t => {
+        const bank = state.banks.find(b => Number(b.id) === Number(t.bank_id));
+        return `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--bg3);gap:10px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="width:32px;height:32px;border-radius:50%;background:${t.type==="deposito"?"var(--inc-bg)":"var(--exp-bg)"};display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">
+                ${t.type==="deposito"?"↑":"↓"}
+              </div>
+              <div>
+                <div style="font-size:13px;font-weight:500;color:var(--text)">${t.description||t.type==="deposito"?"Depósito":"Saque"}</div>
+                <div style="font-size:11px;color:var(--text3)">${bank?.name||"?"} · ${new Date(t.date+"T00:00:00").toLocaleDateString("pt-BR")}</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:14px;font-weight:600;color:${t.type==="deposito"?"var(--green)":"var(--red)"}">
+                ${t.type==="deposito"?"+":"-"}${fmt(t.amount)}
+              </span>
+              <button class="btn-icon" onclick="deleteBankTransfer(${t.id})">✕</button>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>` : ""}
 
     ${state.banks.length ? `
       <div class="section">
@@ -1407,6 +1482,58 @@ async function deleteTx(id) {
   const { error } = await sb.from("transactions").delete().eq("id", id).eq("user_id", state.userId);
   if (!error) { state.transactions = state.transactions.filter(t => t.id !== id); render(); }
   else alert("Erro ao excluir transação: " + error.message);
+}
+
+
+// =====================
+// ACTIONS — BANK TRANSFERS
+// =====================
+async function saveBankTransfer() {
+  const uid     = state.userId;
+  const type    = document.getElementById("bt-type").value;
+  const bank_id = document.getElementById("bt-bank").value;
+  const amount  = parseCurrency(document.getElementById("bt-amount").value);
+  const desc    = document.getElementById("bt-desc").value.trim() || null;
+  const date    = document.getElementById("bt-date").value;
+
+  if (!uid)     return alert("Sessão expirada.");
+  if (!bank_id) return alert("Selecione um banco.");
+  if (!amount)  return alert("Informe o valor.");
+
+  // Verifica saldo para saque
+  if (type === "saque") {
+    const bank    = state.banks.find(b => Number(b.id) === Number(bank_id));
+    const balance = bankBalance(bank);
+    if (amount > balance) {
+      return alert(`Saldo insuficiente!\nSaldo atual: ${fmt(balance)}\nValor do saque: ${fmt(amount)}`);
+    }
+  }
+
+  const { data, error } = await sb.from("bank_transfers").insert([{
+    user_id: uid, type, bank_id: parseInt(bank_id), amount, description: desc, date,
+  }]).select().single();
+
+  if (!error && data) {
+    if (!state.bank_transfers) state.bank_transfers = [];
+    state.bank_transfers.unshift(data);
+    render();
+  } else if (error) alert("Erro: " + error.message);
+}
+
+function clearBankTransferForm() {
+  const amt  = document.getElementById("bt-amount");
+  const desc = document.getElementById("bt-desc");
+  if (amt)  amt.value  = "";
+  if (desc) desc.value = "";
+}
+
+async function deleteBankTransfer(id) {
+  if (!confirm("Excluir esta movimentação?")) return;
+  const { error } = await sb.from("bank_transfers").delete().eq("id", id).eq("user_id", state.userId);
+  if (!error) {
+    state.bank_transfers = state.bank_transfers.filter(t => t.id !== id);
+    render();
+  } else alert("Erro: " + error.message);
 }
 
 // =====================
