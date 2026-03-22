@@ -14,6 +14,93 @@ function parseCurrency(str) {
   const clean = str.replace(/[R$\s.]/g, "").replace(",", ".");
   return parseFloat(clean) || 0;
 }
+// =====================
+// TOAST NOTIFICATIONS
+// =====================
+function toast(message, type = "info", duration = 3500) {
+  // Remove existing toasts of same type to avoid stacking
+  const existing = document.querySelectorAll(".toast-notification");
+  if (existing.length > 2) existing[0].remove();
+
+  const colors = {
+    success: { bg: "#0d2e23", border: "#1D9E75", text: "#1D9E75", icon: "✓" },
+    error:   { bg: "#2e1a0d", border: "#D85A30", text: "#D85A30", icon: "✕" },
+    warning: { bg: "#2a1f0a", border: "#BA7517", text: "#BA7517", icon: "!" },
+    info:    { bg: "#1a1a2e", border: "#7F77DD", text: "#7F77DD", icon: "i" },
+  };
+  const c = colors[type] || colors.info;
+
+  const el = document.createElement("div");
+  el.className = "toast-notification";
+  el.style.cssText = `
+    position:fixed;bottom:24px;right:24px;z-index:9999;
+    background:${c.bg};border:1px solid ${c.border};border-radius:12px;
+    padding:14px 18px;display:flex;align-items:flex-start;gap:12px;
+    max-width:340px;min-width:240px;
+    box-shadow:0 4px 24px rgba(0,0,0,.4);
+    animation:toastIn .25s ease;
+    font-family:system-ui,sans-serif;
+  `;
+  el.innerHTML = `
+    <div style="width:22px;height:22px;border-radius:50%;background:${c.border};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;margin-top:1px">${c.icon}</div>
+    <div style="flex:1;font-size:13px;color:${c.text};line-height:1.5">${message}</div>
+    <button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:#555;font-size:16px;padding:0;line-height:1;flex-shrink:0">✕</button>
+  `;
+
+  // Add animation style if not exists
+  if (!document.getElementById("toast-style")) {
+    const style = document.createElement("style");
+    style.id = "toast-style";
+    style.textContent = `
+      @keyframes toastIn { from { transform:translateX(110%); opacity:0; } to { transform:translateX(0); opacity:1; } }
+      @keyframes toastOut { from { transform:translateX(0); opacity:1; } to { transform:translateX(110%); opacity:0; } }
+    `;
+    document.head.appendChild(style);
+  }
+
+  document.body.appendChild(el);
+
+  // Auto remove
+  setTimeout(() => {
+    el.style.animation = "toastOut .25s ease forwards";
+    setTimeout(() => el.remove(), 250);
+  }, duration);
+}
+
+// Replaces alert() globally
+function showAlert(message, type = "error") {
+  toast(message, type);
+}
+
+function showConfirm(message, onConfirm) {
+  const isDark = !document.body.classList.contains("light-mode");
+  const bg2    = isDark ? "#16181f" : "#ffffff";
+  const border = isDark ? "#2a2d3a" : "#e0e0e8";
+  const text   = isDark ? "#e8e8e8" : "#1a1a2e";
+
+  const el = document.createElement("div");
+  el.id = "confirm-modal";
+  el.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9998;display:flex;align-items:center;justify-content:center;padding:1rem;font-family:system-ui,sans-serif";
+  el.innerHTML = `
+    <div style="background:${bg2};border:1px solid ${border};border-radius:14px;padding:1.5rem;width:100%;max-width:360px">
+      <div style="font-size:14px;color:${text};margin-bottom:1.2rem;line-height:1.5">${message}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="document.getElementById('confirm-modal').remove()" style="background:transparent;border:1px solid ${border};color:#888;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Cancelar</button>
+        <button id="confirm-ok" style="background:#D85A30;border:none;color:#fff;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500">Confirmar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById("confirm-ok").onclick = () => {
+    el.remove();
+    onConfirm();
+  };
+  el.addEventListener("click", e => { if (e.target === el) el.remove(); });
+}
+
+
+
+
 
 // =====================
 // SUPABASE
@@ -113,6 +200,7 @@ let state = {
   filterCard:   "",
   filterBank:   "",
   boletos:      [],
+  paid_boletos: [],
   invoices:     [],
 };
 
@@ -227,6 +315,7 @@ function resetState() {
   state.banks        = [];
   state.bank_transfers = [];
   state.boletos      = [];
+  state.paid_boletos = [];
   state.invoices     = [];
   state.dashMonth    = "";
   state.page         = "dashboard";
@@ -276,6 +365,14 @@ async function loadData() {
       state.invoices = r8.data || [];
     } catch (e) {
       state.invoices = [];
+    }
+
+    // Boletos pagos (histórico)
+    try {
+      const r9 = await sb.from("paid_boletos").select("*").eq("user_id", uid).order("paid_at", { ascending: false });
+      state.paid_boletos = r9.data || [];
+    } catch (e) {
+      state.paid_boletos = [];
     }
 
     return true;
@@ -1249,10 +1346,10 @@ async function saveBoleto() {
   const fileInput   = document.getElementById("bol-file");
   const file        = fileInput?.files?.[0] || null;
 
-  if (!uid)          return alert("Sessão expirada.");
-  if (!description)  return alert("Informe a descrição.");
-  if (!amount)       return alert("Informe o valor.");
-  if (!due_date)     return alert("Informe a data de vencimento.");
+  if (!uid)          return toast("Sessão expirada.", "warning");
+  if (!description)  return toast("Informe a descrição.", "warning");
+  if (!amount)       return toast("Informe o valor.", "warning");
+  if (!due_date)     return toast("Informe a data de vencimento.", "warning");
 
   let file_path = null;
   let file_type = null;
@@ -1262,7 +1359,7 @@ async function saveBoleto() {
     const ext      = file.name.split(".").pop();
     const path     = `${uid}/${Date.now()}.${ext}`;
     const { error: uploadError } = await sb.storage.from("boletos").upload(path, file, { contentType: file.type });
-    if (uploadError) return alert("Erro ao enviar arquivo: " + uploadError.message);
+    if (uploadError) return toast("Erro: " + uploadError.message, "error");
     file_path = path;
     file_type = file.type;
   }
@@ -1275,7 +1372,7 @@ async function saveBoleto() {
     state.boletos.push(data);
     state.boletos.sort((a, b) => a.due_date.localeCompare(b.due_date));
     render();
-  } else if (error) alert("Erro ao salvar boleto: " + error.message);
+  } else if (error) toast("Erro: " + error.message, "error");
 }
 
 function clearBoletoForm() {
@@ -1291,29 +1388,42 @@ async function markBoletoAsPaid(id) {
   const boleto = state.boletos.find(b => b.id === id);
   if (!boleto) return;
 
-  // Apaga o arquivo do storage se tiver
+  // 1. Grava no histórico de boletos pagos (sem o arquivo)
+  const { data: paid, error: paidErr } = await sb.from("paid_boletos").insert([{
+    user_id:     state.userId,
+    description: boleto.description,
+    amount:      boleto.amount,
+    due_date:    boleto.due_date,
+    barcode:     boleto.barcode || null,
+    paid_at:     new Date().toISOString(),
+  }]).select().single();
+
+  if (paidErr) { toast("Erro: " + paidErr.message, "error"); return; }
+  if (paid) state.paid_boletos.unshift(paid);
+
+  // 2. Apaga o arquivo do storage se tiver
   if (boleto.file_path) {
     await sb.storage.from("boletos").remove([boleto.file_path]);
   }
 
-  // Apaga do banco
+  // 3. Apaga o boleto pendente
   const { error } = await sb.from("boletos").delete().eq("id", id).eq("user_id", state.userId);
   if (!error) {
     state.boletos = state.boletos.filter(b => b.id !== id);
     render();
-  } else alert("Erro ao marcar como pago: " + error.message);
+  } else toast("Erro: " + error.message, "error");
 }
 
 async function downloadBoleto(filePath, boletoId) {
   const { data, error } = await sb.storage.from("boletos").createSignedUrl(filePath, 60);
   if (!error && data?.signedUrl) {
     window.open(data.signedUrl, "_blank");
-  } else alert("Erro ao abrir arquivo.");
+  } else toast("Erro ao abrir arquivo.", "warning");
 }
 
 function copyBarcode(barcode) {
   navigator.clipboard.writeText(barcode).then(() => {
-    alert("Código de barras copiado!");
+    toast("Código de barras copiado!", "warning");
   }).catch(() => {
     prompt("Copie o código:", barcode);
   });
@@ -1404,16 +1514,16 @@ async function saveTx() {
   const card_id        = document.getElementById("f-card").value   || null;
   const installments   = parseInt(document.getElementById("f-installments")?.value) || 1;
 
-  if (!uid)          return alert("Sessão expirada. Faça login novamente.");
-  if (!description)  return alert("Informe a descrição.");
-  if (!amount)       return alert("Informe o valor.");
-  if (!date)         return alert("Informe a data.");
+  if (!uid)          return toast("Sessão expirada. Faça login novamente.", "warning");
+  if (!description)  return toast("Informe a descrição.", "warning");
+  if (!amount)       return toast("Informe o valor.", "warning");
+  if (!date)         return toast("Informe a data.", "warning");
 
   // Se tem cartão com múltiplas parcelas
   if (card_id && installments > 1) {
     const card = state.cards.find(c => c.id === parseInt(card_id));
     if (!card || !card.closing_day || !card.due_day) {
-      return alert("Para parcelar, o cartão precisa ter dia de fechamento e vencimento cadastrados.");
+      return toast("Para parcelar, o cartão precisa ter dia de fechamento e vencimento cadastrados.", "warning");
     }
 
     const amountPerInstallment = amount / installments;
@@ -1436,7 +1546,7 @@ async function saveTx() {
       data.forEach(d => state.transactions.unshift(d));
       state.transactions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       render();
-    } else if (error) alert("Erro ao salvar parcelas: " + error.message);
+    } else if (error) toast("Erro: " + error.message, "error");
     return;
   }
 
@@ -1459,8 +1569,8 @@ async function saveTx() {
     installment_number: 1, installment_total: 1,
   }]).select().single();
 
-  if (!error && data) { state.transactions.unshift(data); render(); }
-  else if (error) alert("Erro: " + error.message);
+  if (!error && data) { state.transactions.unshift(data); render(); toast("Lançamento salvo!", "success"); }
+  else if (error) toast("Erro: " + error.message, "error");
 }
 
 // Adiciona N meses a uma data ISO
@@ -1481,7 +1591,7 @@ function clearTxForm() {
 async function deleteTx(id) {
   const { error } = await sb.from("transactions").delete().eq("id", id).eq("user_id", state.userId);
   if (!error) { state.transactions = state.transactions.filter(t => t.id !== id); render(); }
-  else alert("Erro ao excluir transação: " + error.message);
+  else toast("Erro: " + error.message, "error");
 }
 
 
@@ -1496,16 +1606,16 @@ async function saveBankTransfer() {
   const desc    = document.getElementById("bt-desc").value.trim() || null;
   const date    = document.getElementById("bt-date").value;
 
-  if (!uid)     return alert("Sessão expirada.");
-  if (!bank_id) return alert("Selecione um banco.");
-  if (!amount)  return alert("Informe o valor.");
+  if (!uid)     return toast("Sessão expirada.", "warning");
+  if (!bank_id) return toast("Selecione um banco.", "warning");
+  if (!amount)  return toast("Informe o valor.", "warning");
 
   // Verifica saldo para saque
   if (type === "saque") {
     const bank    = state.banks.find(b => Number(b.id) === Number(bank_id));
     const balance = bankBalance(bank);
     if (amount > balance) {
-      return alert(`Saldo insuficiente!\nSaldo atual: ${fmt(balance)}\nValor do saque: ${fmt(amount)}`);
+      return toast(`Saldo insuficiente!<br>Saldo atual: ${fmt(balance)}<br>Valor do saque: ${fmt(amount)}`, "error");
     }
   }
 
@@ -1517,7 +1627,7 @@ async function saveBankTransfer() {
     if (!state.bank_transfers) state.bank_transfers = [];
     state.bank_transfers.unshift(data);
     render();
-  } else if (error) alert("Erro: " + error.message);
+  } else if (error) toast("Erro: " + error.message, "error");
 }
 
 function clearBankTransferForm() {
@@ -1528,12 +1638,12 @@ function clearBankTransferForm() {
 }
 
 async function deleteBankTransfer(id) {
-  if (!confirm("Excluir esta movimentação?")) return;
+  showConfirm("Excluir esta movimentação?", async () => {
   const { error } = await sb.from("bank_transfers").delete().eq("id", id).eq("user_id", state.userId);
   if (!error) {
     state.bank_transfers = state.bank_transfers.filter(t => t.id !== id);
     render();
-  } else alert("Erro: " + error.message);
+  } else toast("Erro: " + error.message, "error");
 }
 
 // =====================
@@ -1544,12 +1654,12 @@ async function saveBank() {
   const name            = document.getElementById("b-name").value.trim();
   const initial_balance = parseCurrency(document.getElementById("b-balance").value) || 0;
 
-  if (!uid)   return alert("Sessão expirada. Faça login novamente.");
-  if (!name)  return alert("Informe o nome do banco.");
+  if (!uid)   return toast("Sessão expirada. Faça login novamente.", "warning");
+  if (!name)  return toast("Informe o nome do banco.", "warning");
 
   const { data, error } = await sb.from("banks").insert([{ name, initial_balance, user_id: uid }]).select().single();
-  if (!error && data) { state.banks.push(data); render(); }
-  else if (error) alert("Erro ao salvar banco: " + error.message);
+  if (!error && data) { state.banks.push(data); render(); toast("Banco salvo!", "success"); }
+  else if (error) toast("Erro: " + error.message, "error");
 }
 
 function clearBankForm() {
@@ -1560,7 +1670,7 @@ function clearBankForm() {
 async function deleteBank(id) {
   const { error } = await sb.from("banks").delete().eq("id", id).eq("user_id", state.userId);
   if (!error) { state.banks = state.banks.filter(b => b.id !== id); render(); }
-  else alert("Erro ao excluir banco: " + error.message);
+  else toast("Erro: " + error.message, "error");
 }
 
 async function quickDeposit(bankId) {
@@ -1573,7 +1683,7 @@ async function quickDeposit(bankId) {
     amount, date: today(), bank_id: bankId, category: null,
     installment_number: 1, installment_total: 1,
   }]).select().single();
-  if (!error && data) { state.transactions.unshift(data); render(); }
+  if (!error && data) { state.transactions.unshift(data); render(); toast("Lançamento salvo!", "success"); }
 }
 
 // =====================
@@ -1588,14 +1698,14 @@ async function saveCard() {
   const closing_day  = parseInt(document.getElementById("c-closing").value) || null;
   const due_day      = parseInt(document.getElementById("c-due").value)     || null;
 
-  if (!uid)          return alert("Sessão expirada. Faça login novamente.");
-  if (!name)         return alert("Informe o nome do cartão.");
-  if (!closing_day)  return alert("Informe o dia de fechamento.");
-  if (!due_day)      return alert("Informe o dia de vencimento.");
+  if (!uid)          return toast("Sessão expirada. Faça login novamente.", "warning");
+  if (!name)         return toast("Informe o nome do cartão.", "warning");
+  if (!closing_day)  return toast("Informe o dia de fechamento.", "warning");
+  if (!due_day)      return toast("Informe o dia de vencimento.", "warning");
 
   const { data, error } = await sb.from("cards").insert([{ name, type, color, limit_amount, closing_day, due_day, user_id: uid }]).select().single();
-  if (!error && data) { state.cards.push(data); render(); }
-  else if (error) alert("Erro ao salvar cartão: " + error.message);
+  if (!error && data) { state.cards.push(data); render(); toast("Cartão salvo!", "success"); }
+  else if (error) toast("Erro: " + error.message, "error");
 }
 
 function clearCardForm() { document.getElementById("c-name").value = ""; }
@@ -1603,7 +1713,7 @@ function clearCardForm() { document.getElementById("c-name").value = ""; }
 async function deleteCard(id) {
   const { error } = await sb.from("cards").delete().eq("id", id).eq("user_id", state.userId);
   if (!error) { state.cards = state.cards.filter(c => c.id !== id); render(); }
-  else alert("Erro ao excluir cartão: " + error.message);
+  else toast("Erro: " + error.message, "error");
 }
 
 // =====================
@@ -1631,17 +1741,17 @@ async function saveFixed() {
   const payment_method = document.getElementById("fx-method").value || null;
   const boleto_id      = document.getElementById("fx-boleto")?.value || null;
 
-  if (!uid)          return alert("Sessão expirada. Faça login novamente.");
-  if (!description)  return alert("Informe a descrição.");
-  if (!amount)       return alert("Informe o valor.");
-  if (!due_day)      return alert("Informe o dia de vencimento.");
+  if (!uid)          return toast("Sessão expirada. Faça login novamente.", "warning");
+  if (!description)  return toast("Informe a descrição.", "warning");
+  if (!amount)       return toast("Informe o valor.", "warning");
+  if (!due_day)      return toast("Informe o dia de vencimento.", "warning");
 
   const { data, error } = await sb.from("fixed_expenses").insert([{
     description, amount, due_day, category, payment_method, user_id: uid,
     boleto_id: boleto_id ? parseInt(boleto_id) : null,
   }]).select().single();
-  if (!error && data) { state.fixed.push(data); render(); }
-  else if (error) alert("Erro ao salvar conta fixa: " + error.message);
+  if (!error && data) { state.fixed.push(data); render(); toast("Conta fixa salva!", "success"); }
+  else if (error) toast("Erro: " + error.message, "error");
 }
 
 function clearFixedForm() {
@@ -1651,7 +1761,7 @@ function clearFixedForm() {
 async function deleteFixed(id) {
   const { error } = await sb.from("fixed_expenses").delete().eq("id", id).eq("user_id", state.userId);
   if (!error) { state.fixed = state.fixed.filter(f => f.id !== id); render(); }
-  else alert("Erro ao excluir conta fixa: " + error.message);
+  else toast("Erro: " + error.message, "error");
 }
 
 // =====================
@@ -1663,16 +1773,16 @@ async function saveGoal() {
   const target  = parseCurrency(document.getElementById("g-target").value);
   const bank_id = document.getElementById("g-bank").value || null;
 
-  if (!uid)    return alert("Sessão expirada. Faça login novamente.");
-  if (!name)   return alert("Informe o nome da meta.");
-  if (!target) return alert("Informe o valor alvo.");
+  if (!uid)    return toast("Sessão expirada. Faça login novamente.", "warning");
+  if (!name)   return toast("Informe o nome da meta.", "warning");
+  if (!target) return toast("Informe o valor alvo.", "warning");
 
   const { data, error } = await sb.from("goals").insert([{
     name, target, saved: 0, user_id: uid,
     bank_id: bank_id ? parseInt(bank_id) : null,
   }]).select().single();
-  if (!error && data) { state.goals.push(data); render(); }
-  else if (error) alert("Erro ao salvar meta: " + error.message);
+  if (!error && data) { state.goals.push(data); render(); toast("Meta salva!", "success"); }
+  else if (error) toast("Erro: " + error.message, "error");
 }
 
 function clearGoalForm() {
@@ -1682,7 +1792,7 @@ function clearGoalForm() {
 async function deleteGoal(id) {
   const { error } = await sb.from("goals").delete().eq("id", id).eq("user_id", state.userId);
   if (!error) { state.goals = state.goals.filter(g => g.id !== id); render(); }
-  else alert("Erro ao excluir meta: " + error.message);
+  else toast("Erro: " + error.message, "error");
 }
 
 async function promptDeposit(id) {
@@ -1693,7 +1803,7 @@ async function promptDeposit(id) {
 
   const newSaved = Math.min(parseFloat(goal.target), parseFloat(goal.saved) + amount);
   const { error } = await sb.from("goals").update({ saved: newSaved }).eq("id", id).eq("user_id", state.userId);
-  if (error) { alert("Erro ao atualizar meta: " + error.message); return; }
+  if (error) { toast("Erro: " + error.message, "error"); return; }
   goal.saved = newSaved;
 
   if (goal.bank_id) {
@@ -1715,22 +1825,22 @@ async function saveCategory() {
   const uid  = state.userId;
   const name = document.getElementById("cat-name").value.trim();
 
-  if (!uid)  return alert("Sessão expirada. Faça login novamente.");
-  if (!name) return alert("Informe o nome da categoria.");
-  if (state.categories.find(c => c.name === name)) return alert("Categoria já existe.");
+  if (!uid)  return toast("Sessão expirada. Faça login novamente.", "warning");
+  if (!name) return toast("Informe o nome da categoria.", "warning");
+  if (state.categories.find(c => c.name === name)) return toast("Categoria já existe.", "warning");
 
   const { data, error } = await sb.from("categories").insert([{ name, user_id: uid }]).select().single();
   if (!error && data) {
     state.categories.push({ id: data.id, name: data.name });
     state.categories.sort((a, b) => a.name.localeCompare(b.name));
     render();
-  } else if (error) alert("Erro ao salvar categoria: " + error.message);
+  } else if (error) toast("Erro: " + error.message, "error");
 }
 
 async function deleteCategory(id) {
   const { error } = await sb.from("categories").delete().eq("id", id).eq("user_id", state.userId);
   if (!error) { state.categories = state.categories.filter(c => c.id !== id); render(); }
-  else alert("Erro ao excluir categoria: " + error.message);
+  else toast("Erro: " + error.message, "error");
 }
 
 
@@ -1886,6 +1996,27 @@ function renderFaturas() {
       </div>
     </div>
 
+    ${(state.paid_boletos||[]).length ? `
+    <div class="section">
+      <div class="section-title">Histórico de boletos pagos</div>
+      ${state.paid_boletos.slice(0,20).map(b => {
+        const paidDate = new Date(b.paid_at).toLocaleDateString("pt-BR");
+        const dueDate  = new Date(b.due_date+"T00:00:00").toLocaleDateString("pt-BR");
+        return `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--bg3);flex-wrap:wrap;gap:6px">
+            <div style="min-width:0">
+              <div style="font-size:13px;font-weight:500;color:var(--text)">${b.description}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">
+                Vencimento: ${dueDate} · Pago em: ${paidDate}
+                ${b.barcode ? `<span style="margin-left:8px;font-family:monospace;font-size:10px">${b.barcode.substring(0,20)}...</span>` : ""}
+              </div>
+            </div>
+            <span style="font-weight:600;color:var(--green);white-space:nowrap">${fmt(b.amount)}</span>
+          </div>
+        `;
+      }).join("")}
+    </div>` : ""}
+
     <!-- Modal pagar fatura -->
     <div id="pay-invoice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:101;align-items:center;justify-content:center;padding:1rem">
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:1.5rem;width:100%;max-width:400px">
@@ -2003,7 +2134,7 @@ async function confirmPayInvoice() {
     bank_id: bankId ? parseInt(bankId) : null,
   }]).select().single();
 
-  if (invErr) { alert("Erro ao registrar fatura: " + invErr.message); return; }
+  if (invErr) { toast("Erro: " + invErr.message, "error"); return; }
   state.invoices.unshift(inv);
 
   // Se escolheu banco, debita o valor
@@ -2322,7 +2453,7 @@ function exportXLSXCards() {
   });
 
   if (wb.SheetNames.length === 0) {
-    alert("Nenhuma transação de cartão encontrada no período selecionado.");
+    toast("Nenhuma transação de cartão encontrada no período selecionado.", "warning");
     return;
   }
 
@@ -2440,12 +2571,12 @@ function editTx(id) {
       payment_method: getEditField("method").value || null,
       card_id:        getEditField("card").value   ? parseInt(getEditField("card").value)   : null,
     };
-    if (!updates.description || !updates.amount || !updates.date) return alert("Preencha descrição, valor e data.");
+    if (!updates.description || !updates.amount || !updates.date) return toast("Preencha descrição, valor e data.", "warning");
     const { error } = await sb.from("transactions").update(updates).eq("id", id).eq("user_id", state.userId);
     if (!error) {
       Object.assign(state.transactions.find(t => t.id === id), updates);
       closeEditModal(); render();
-    } else alert("Erro: " + error.message);
+    } else toast("Erro: " + error.message, "error");
   });
 }
 
@@ -2463,10 +2594,10 @@ function editBank(id) {
       name:            getEditField("name").value.trim(),
       initial_balance: parseCurrency(getEditField("balance").value),
     };
-    if (!updates.name) return alert("Informe o nome.");
+    if (!updates.name) return toast("Informe o nome.", "warning");
     const { error } = await sb.from("banks").update(updates).eq("id", id).eq("user_id", state.userId);
     if (!error) { Object.assign(state.banks.find(x => x.id === id), updates); closeEditModal(); render(); }
-    else alert("Erro: " + error.message);
+    else toast("Erro: " + error.message, "error");
   });
 }
 
@@ -2492,10 +2623,10 @@ function editCard(id) {
       closing_day:   parseInt(getEditField("closing").value) || null,
       due_day:       parseInt(getEditField("due").value)     || null,
     };
-    if (!updates.name) return alert("Informe o nome.");
+    if (!updates.name) return toast("Informe o nome.", "warning");
     const { error } = await sb.from("cards").update(updates).eq("id", id).eq("user_id", state.userId);
     if (!error) { Object.assign(state.cards.find(x => x.id === id), updates); closeEditModal(); render(); }
-    else alert("Erro: " + error.message);
+    else toast("Erro: " + error.message, "error");
   });
 }
 
@@ -2521,10 +2652,10 @@ function editFixed(id) {
       category:       getEditField("cat").value    || null,
       payment_method: getEditField("method").value || null,
     };
-    if (!updates.description || !updates.amount) return alert("Informe descrição e valor.");
+    if (!updates.description || !updates.amount) return toast("Informe descrição e valor.", "warning");
     const { error } = await sb.from("fixed_expenses").update(updates).eq("id", id).eq("user_id", state.userId);
     if (!error) { Object.assign(state.fixed.find(x => x.id === id), updates); closeEditModal(); render(); }
-    else alert("Erro: " + error.message);
+    else toast("Erro: " + error.message, "error");
   });
 }
 
@@ -2547,10 +2678,10 @@ function editGoal(id) {
       saved:   parseCurrency(getEditField("saved").value),
       bank_id: getEditField("bank").value ? parseInt(getEditField("bank").value) : null,
     };
-    if (!updates.name || !updates.target) return alert("Informe nome e valor alvo.");
+    if (!updates.name || !updates.target) return toast("Informe nome e valor alvo.", "warning");
     const { error } = await sb.from("goals").update(updates).eq("id", id).eq("user_id", state.userId);
     if (!error) { Object.assign(state.goals.find(x => x.id === id), updates); closeEditModal(); render(); }
-    else alert("Erro: " + error.message);
+    else toast("Erro: " + error.message, "error");
   });
 }
 
@@ -2572,10 +2703,10 @@ function editBoleto(id) {
       due_date:    getEditField("date").value,
       barcode:     getEditField("barcode").value.trim() || null,
     };
-    if (!updates.description || !updates.amount || !updates.due_date) return alert("Preencha todos os campos obrigatórios.");
+    if (!updates.description || !updates.amount || !updates.due_date) return toast("Preencha todos os campos obrigatórios.", "warning");
     const { error } = await sb.from("boletos").update(updates).eq("id", id).eq("user_id", state.userId);
     if (!error) { Object.assign(state.boletos.find(x => x.id === id), updates); closeEditModal(); render(); }
-    else alert("Erro: " + error.message);
+    else toast("Erro: " + error.message, "error");
   });
 }
 
@@ -2589,10 +2720,10 @@ function editCategory(id) {
     { key: "name", label: "Nome", type: "text", value: c.name },
   ], async function() {
     const name = getEditField("name").value.trim();
-    if (!name) return alert("Informe o nome.");
+    if (!name) return toast("Informe o nome.", "warning");
     const { error } = await sb.from("categories").update({ name }).eq("id", id).eq("user_id", state.userId);
     if (!error) { state.categories.find(x => x.id === id).name = name; closeEditModal(); render(); }
-    else alert("Erro: " + error.message);
+    else toast("Erro: " + error.message, "error");
   });
 }
 
@@ -2600,7 +2731,7 @@ function editCategory(id) {
 // DESFAZER PAGAMENTO DE FATURA
 // =====================
 async function undoInvoice(id) {
-  if (!confirm("Desfazer este pagamento de fatura?")) return;
+  showConfirm("Desfazer este pagamento de fatura?", async () => {
   const inv = state.invoices.find(x => x.id === id);
   if (!inv) return;
 
@@ -2627,7 +2758,8 @@ async function undoInvoice(id) {
   if (!error) {
     state.invoices = state.invoices.filter(x => x.id !== id);
     render();
-  } else alert("Erro ao desfazer: " + error.message);
+  } else toast("Erro: " + error.message, "error");
+  });
 }
 
 // =====================
