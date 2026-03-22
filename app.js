@@ -851,10 +851,10 @@ function renderMovimentacoes() {
   document.getElementById("content").innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:1rem">
       <div class="filters" style="margin-bottom:0;flex-wrap:wrap">
-        <select onchange="state.filterMonth=this.value;render()">
-          <option value="">Todos os meses</option>
-          ${allMonthsRaw.map(ym => `<option value="${ym}" ${state.filterMonth===ym?"selected":""}>${fmtMonth(ym)}${ym===currentYM?" (atual)":""}</option>`).join("")}
-        </select>
+        <input type="month"
+          value="${state.filterMonth || currentYM}"
+          onchange="state.filterMonth=this.value;render()"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:13px;font-weight:500;color:var(--text);font-family:inherit;height:36px;outline:none;cursor:pointer;color-scheme:inherit">
         <select onchange="state.filterCat=this.value;render()">
           <option value="">Todas as categorias</option>
           ${state.categories.map(c => `<option value="${c.name}" ${state.filterCat===c.name?"selected":""}>${c.name}</option>`).join("")}
@@ -1003,7 +1003,6 @@ function renderBancos() {
                 <div class="bank-card-balance ${bal>=0?"green":"red"}">${fmt(bal)}</div>
                 <div class="bank-card-sub">Inicial: ${fmt(b.initial_balance)} · +${fmt(inc)} / -${fmt(exp)}</div>
                 <div style="margin-top:12px;display:flex;gap:6px">
-                  <button class="btn btn-secondary btn-sm" onclick="quickDeposit(${b.id})">+ Depósito</button>
                   <button class="btn btn-secondary btn-sm" onclick="state.filterBank='${b.id}';goTo('movimentacoes')">Ver movimentos</button>
                 </div>
               </div>
@@ -1639,11 +1638,12 @@ function clearBankTransferForm() {
 
 async function deleteBankTransfer(id) {
   showConfirm("Excluir esta movimentação?", async () => {
-  const { error } = await sb.from("bank_transfers").delete().eq("id", id).eq("user_id", state.userId);
-  if (!error) {
-    state.bank_transfers = state.bank_transfers.filter(t => t.id !== id);
-    render();
-  } else toast("Erro: " + error.message, "error");
+    const { error } = await sb.from("bank_transfers").delete().eq("id", id).eq("user_id", state.userId);
+    if (!error) {
+      state.bank_transfers = state.bank_transfers.filter(t => t.id !== id);
+      render();
+    } else toast("Erro: " + error.message, "error");
+  });
 }
 
 // =====================
@@ -2732,7 +2732,7 @@ function editCategory(id) {
 // =====================
 async function undoInvoice(id) {
   showConfirm("Desfazer este pagamento de fatura?", async () => {
-  const inv = state.invoices.find(x => x.id === id);
+    const inv = state.invoices.find(x => x.id === id);
   if (!inv) return;
 
   // Remove a transação de débito que foi gerada no banco (se existir)
