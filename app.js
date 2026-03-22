@@ -339,7 +339,11 @@ function renderDashboard() {
   const inc        = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
   const expTxs     = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
   const fixedTotal = state.fixed.reduce((s, f) => s + parseFloat(f.amount), 0);
-  const exp        = expTxs + fixedTotal; // contas fixas somadas automaticamente
+  // Boletos: conta os do mês selecionado + os vencidos (atrasados)
+  const boletosDoMes = state.boletos.filter(b => b.due_date.substring(0,7) === state.dashMonth);
+  const boletosAtrasados = state.boletos.filter(b => b.due_date < state.dashMonth + "-01" && b.due_date.substring(0,7) !== state.dashMonth);
+  const boletosTotal = [...boletosDoMes, ...boletosAtrasados].reduce((s, b) => s + parseFloat(b.amount), 0);
+  const exp        = expTxs + fixedTotal + boletosTotal;
   const bal        = inc - exp;
   const totalBankBalance = state.banks.reduce((s, b) => s + bankBalance(b), 0);
 
@@ -396,11 +400,10 @@ function renderDashboard() {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:13px;color:#888">Exibindo:</span>
-        <select onchange="state.dashMonth=this.value;render()" style="background:${selBg};border:1px solid ${selBorder};border-radius:8px;padding:7px 32px 7px 12px;font-size:13px;font-weight:600;color:${selColor};appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 10 10%22%3E%3Cpath fill=%22%237F77DD%22 d=%22M5 7L0 2h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;cursor:pointer;font-family:inherit;height:36px;outline:none">
-          ${availableMonths.map(ym => `<option value="${ym}" ${state.dashMonth===ym?"selected":""}>${monthLabel(ym)}${ym===currentYM?" (atual)":""}</option>`).join("")}
-        </select>
+        <input type="month" value="${state.dashMonth}" onchange="state.dashMonth=this.value;render()"
+          style="background:${selBg};border:1px solid ${selBorder};border-radius:8px;padding:7px 12px;font-size:13px;font-weight:600;color:${selColor};font-family:inherit;height:36px;outline:none;cursor:pointer;color-scheme:${isDark?'dark':'light'}">
       </div>
-      ${state.dashMonth !== currentYM ? `<button class="btn btn-secondary btn-sm" onclick="state.dashMonth='${currentYM}';render()">Voltar ao mês atual</button>` : ""}
+      ${state.dashMonth !== currentYM ? `<button class="btn btn-secondary btn-sm" onclick="state.dashMonth='${currentYM}';render()">Mês atual</button>` : ""}
     </div>
   `;
 
@@ -423,7 +426,7 @@ function renderDashboard() {
       <div class="s-card">
         <div class="s-label">Gastos do mês</div>
         <div class="s-value red">${fmt(exp)}</div>
-        <div class="s-sub">Lançamentos: ${fmt(expTxs)} · Fixas: ${fmt(fixedTotal)}</div>
+        <div class="s-sub">Lançamentos: ${fmt(expTxs)} · Fixas: ${fmt(fixedTotal)}${boletosTotal > 0 ? ` · Boletos: ${fmt(boletosTotal)}` : ""}</div>
       </div>
     </div>
 
