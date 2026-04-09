@@ -285,22 +285,30 @@ function showLogin() {
 }
 
 // Inicia o app — verifica sessão existente primeiro, depois escuta eventos
+// Flag para evitar race condition: onAuthStateChange + getSession simultâneos
+let _initHandled = false;
+
 (async () => {
   try {
     const { data } = await sb.auth.getSession();
     if (data?.session?.user) {
+      _initHandled = true;
       await startApp(data.session.user);
       return;
     }
   } catch(e) {
     console.warn("getSession error:", e);
   }
+  _initHandled = true;
   showLogin();
 })();
 
 sb.auth.onAuthStateChange(async (event, session) => {
   if (event === "SIGNED_IN" && session?.user) {
-    await startApp(session.user);
+    // Se o init já tratou, só chama startApp se ainda não carregou (ex: login manual)
+    if (!_initHandled || state.userId !== session.user.id) {
+      await startApp(session.user);
+    }
   } else if (event === "SIGNED_OUT") {
     showLogin();
   }
