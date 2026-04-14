@@ -115,28 +115,6 @@ const sb = supabase.createClient(SB_URL, SB_KEY, {
   }
 });
 
-// Apaga a sessão quando a aba/janela é fechada (não no F5)
-// beforeunload dispara nos dois casos, então usamos uma flag de navegação
-sessionStorage.setItem("tab_active", "1");
-window.addEventListener("beforeunload", () => {
-  // Se a flag sumiu, significa que é um fechamento real (não F5)
-  // Mas beforeunload não distingue F5 de fechar — usamos pagehide + visibilitychange
-});
-
-// pageshow com persisted=false = primeira carga real (não F5 de cache)
-// Usamos sessionStorage para detectar se é uma nova aba ou F5
-const isNewTab = !sessionStorage.getItem("session_exists");
-if (isNewTab) {
-  // Nova aba/janela — apaga a sessão do Supabase do localStorage
-  Object.keys(localStorage).forEach(key => {
-    if (key.startsWith("sb-") || key.includes("supabase")) {
-      localStorage.removeItem(key);
-    }
-  });
-}
-// Marca que esta aba já existe (sobrevive ao F5)
-sessionStorage.setItem("session_exists", "1");
-
 // =====================
 // CONSTANTS
 // =====================
@@ -246,12 +224,17 @@ async function doLogout() {
 }
 
 // =====================
-// SESSION LISTENER — FIX: só recarrega dados no SIGNED_IN, ignora TOKEN_REFRESHED etc.
+// SESSION
 // =====================
-// Função central que inicia o app com um usuário autenticado
+let _appStarted  = false;
+let _appLoading  = false;
+
 async function startApp(user) {
-  if (state.userId === user.id && state.categories.length > 0) {
-    // Já carregado (ex: TOKEN_REFRESHED) — só garante que o app está visível
+  // Se ja esta carregando, ignora chamada duplicada
+  if (_appLoading) return;
+
+  // Se ja carregou para este usuario, so garante visibilidade e renderiza
+  if (_appStarted && state.userId === user.id && state.categories.length > 0) {
     document.getElementById("auth-screen").style.display = "none";
     document.getElementById("app").style.display         = "flex";
     buildNav();
@@ -259,7 +242,9 @@ async function startApp(user) {
     return;
   }
 
+  _appLoading = true;
   state.userId = user.id;
+
   document.getElementById("auth-screen").style.display = "none";
   document.getElementById("app").style.display         = "flex";
   document.getElementById("sidebar-user").textContent  = user.email;
@@ -267,48 +252,44 @@ async function startApp(user) {
   initTheme();
 
   const ok = await loadData();
+  _appLoading = false;
+
   if (!ok) {
     document.getElementById("content").innerHTML =
       '<div class="loading-state" style="color:#D85A30">Erro ao carregar dados.<br>Verifique sua conexão e atualize a página.</div>';
     return;
   }
 
+  _appStarted = true;
   buildNav();
   render();
 }
 
 function showLogin() {
+  _appStarted = false;
+  _appLoading = false;
   state.userId = null;
   resetState();
   document.getElementById("auth-screen").style.display = "flex";
   document.getElementById("app").style.display         = "none";
 }
 
-// Inicia o app — verifica sessão existente primeiro, depois escuta eventos
-// Flag para evitar race condition: onAuthStateChange + getSession simultâneos
-let _initHandled = false;
-
 (async () => {
   try {
     const { data } = await sb.auth.getSession();
     if (data?.session?.user) {
-      _initHandled = true;
       await startApp(data.session.user);
       return;
     }
   } catch(e) {
     console.warn("getSession error:", e);
   }
-  _initHandled = true;
-  showLogin();
+  if (!_appStarted) showLogin();
 })();
 
 sb.auth.onAuthStateChange(async (event, session) => {
   if (event === "SIGNED_IN" && session?.user) {
-    // Se o init já tratou, só chama startApp se ainda não carregou (ex: login manual)
-    if (!_initHandled || state.userId !== session.user.id) {
-      await startApp(session.user);
-    }
+    await startApp(session.user);
   } else if (event === "SIGNED_OUT") {
     showLogin();
   }
@@ -453,17 +434,18 @@ function renderDashboard() {
 
   // Filtra transações do mês selecionado
   const allTxs    = state.transactions;
-  const txs       = allTxs.filter(t => t.date.substring(0,7) === state.dashMonth);
-  const inc        = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
-  const expTxs     = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
-  const fixedTotal = state.fixed.reduce((s, f) => s + parseFloat(f.amount), 0);
-  // Boletos: conta os do mês selecionado + os vencidos (atrasados)
-  const boletosDoMes = state.boletos.filter(b => b.due_date.substring(0,7) === state.dashMonth);
-  const boletosAtrasados = state.boletos.filter(b => b.due_date < state.dashMonth + "-01" && b.due_date.substring(0,7) !== state.dashMonth);
-  const boletosTotal = [...boletosDoMes, ...boletosAtrasados].reduce((s, b) => s + parseFloat(b.amount), 0);
-  const exp        = expTxs + fixedTotal + boletosTotal;
-  const bal        = inc - exp;
+  const txs            = allTxs.filter(t => t.date.substring(0,7) === state.dashMonth);
+  const inc            = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
+  const exp            = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
+  const bal            = inc - exp;
   const totalBankBalance = state.banks.reduce((s, b) => s + bankBalance(b), 0);
+
+  // Fixas e boletos sao exibidos como referencia, mas NAO entram no calculo
+  // de exp/bal para evitar dupla contagem com lancamentos manuais
+  const fixedTotal     = state.fixed.reduce((s, f) => s + parseFloat(f.amount), 0);
+  const boletosDoMes   = state.boletos.filter(b => b.due_date.substring(0,7) === state.dashMonth);
+  const boletosAtrasados = state.boletos.filter(b => b.due_date < state.dashMonth + "-01");
+  const boletosTotal   = [...boletosDoMes, ...boletosAtrasados].reduce((s, b) => s + parseFloat(b.amount), 0);
 
   // Meses disponíveis para o seletor
   const availableMonths = [...new Set(allTxs.map(t => t.date.substring(0,7)))].sort().reverse();
@@ -544,7 +526,7 @@ function renderDashboard() {
       <div class="s-card">
         <div class="s-label">Gastos do mês</div>
         <div class="s-value red">${fmt(exp)}</div>
-        <div class="s-sub">Lançamentos: ${fmt(expTxs)} · Fixas: ${fmt(fixedTotal)}${boletosTotal > 0 ? ` · Boletos: ${fmt(boletosTotal)}` : ""}</div>
+        <div class="s-sub">Fixas estimadas: ${fmt(fixedTotal)}${boletosTotal > 0 ? ` · Boletos: ${fmt(boletosTotal)}` : ""}</div>
       </div>
     </div>
 
@@ -602,7 +584,7 @@ function renderDashboard() {
         <div style="flex:1;min-width:200px">
           <div style="font-size:12px;color:#666;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Selecione o mês</div>
           <select id="report-month" style="width:100%;background:${selBg};border:1px solid ${selBorder};border-radius:8px;padding:8px 30px 8px 10px;font-size:13px;color:${selColor};appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 10 10%22%3E%3Cpath fill=%22%237F77DD%22 d=%22M5 7L0 2h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;font-family:inherit;height:38px;outline:none;cursor:pointer">
-            ${[...new Set(txs.map(t => t.date.substring(0,7)))].sort().reverse().map(m => {
+            ${[...new Set(allTxs.map(t => t.date.substring(0,7)))].sort().reverse().map(m => {
               const [y, mo] = m.split("-");
               const label = new Date(parseInt(y), parseInt(mo)-1, 1).toLocaleString("pt-BR", {month:"long", year:"numeric"});
               return `<option value="${m}">${label}</option>`;
@@ -696,24 +678,22 @@ function renderLancamentos() {
   setTimeout(onTxTypeChange, 0);
 }
 
-// Quando seleciona banco → tipo vira receita, bloqueia cartão e parcelas
+// Quando seleciona banco -> bloqueia cartao/parcelas (banco e cartao sao mutuamente exclusivos)
 function onBankChange() {
-  const bankId = document.getElementById("f-bank").value;
-  const typeEl = document.getElementById("f-type");
-  const cardGroup = document.getElementById("f-card-group");
-  const methodGroup = document.getElementById("f-method-group");
+  const bankId       = document.getElementById("f-bank").value;
+  const typeEl       = document.getElementById("f-type");
+  const cardGroup    = document.getElementById("f-card-group");
   const installGroup = document.getElementById("f-installments-group");
   if (bankId) {
-    if (typeEl)        { typeEl.value = "receita"; typeEl.disabled = true; }
     const cardEl = document.getElementById("f-card");
-    if (cardEl)        cardEl.value = "";
-    if (cardGroup)     { cardGroup.style.opacity = "0.35"; cardGroup.style.pointerEvents = "none"; }
-    if (methodGroup)   { methodGroup.style.opacity = "0.35"; methodGroup.style.pointerEvents = "none"; }
-    if (installGroup)  installGroup.style.display = "none";
+    if (cardEl) cardEl.value = "";
+    if (cardGroup)    { cardGroup.style.opacity = "0.35"; cardGroup.style.pointerEvents = "none"; }
+    if (installGroup) installGroup.style.display = "none";
+    // Tipo livre: despesa vinculada a banco e valida (debito, PIX, etc.)
+    if (typeEl) typeEl.disabled = false;
   } else {
-    if (typeEl)        typeEl.disabled = false;
-    if (cardGroup)     { cardGroup.style.opacity = ""; cardGroup.style.pointerEvents = ""; }
-    if (methodGroup)   { methodGroup.style.opacity = ""; methodGroup.style.pointerEvents = ""; }
+    if (cardGroup) { cardGroup.style.opacity = ""; cardGroup.style.pointerEvents = ""; }
+    if (typeEl)    typeEl.disabled = false;
   }
 }
 
@@ -770,8 +750,8 @@ function onTxTypeChange() {
       const label = dateGroup.querySelector("label");
       if (label) label.textContent = "MÊS *";
     }
-    // Limpa banco se tiver
-    if (bankEl && bankEl.value) { bankEl.value = ""; onBankChange(); }
+    // Limpa banco se tipo for receita (receita manual nao precisa de banco obrigatorio)
+    // Nao forca limpeza: usuario pode querer registrar receita em banco especifico
   } else {
     // Despesa: restaura tudo
     if (methodGroup)   { methodGroup.style.opacity = ""; methodGroup.style.pointerEvents = ""; }
@@ -787,7 +767,6 @@ function onTxTypeChange() {
       const label = dateGroup.querySelector("label");
       if (label) label.textContent = "DATA *";
     }
-    if (bankEl && bankEl.value) { bankEl.value = ""; onBankChange(); }
   }
 }
 
@@ -995,7 +974,7 @@ function renderBancos() {
         <div class="bank-grid">
           ${state.banks.map(b => {
             const bal = bankBalance(b);
-            const txs = state.transactions.filter(t => t.bank_id === b.id);
+            const txs = state.transactions.filter(t => Number(t.bank_id) === Number(b.id));
             const inc = txs.filter(t => t.type==="receita").reduce((s,t) => s+parseFloat(t.amount), 0);
             const exp = txs.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
             return `
@@ -1430,7 +1409,7 @@ async function downloadBoleto(filePath, boletoId) {
 
 function copyBarcode(barcode) {
   navigator.clipboard.writeText(barcode).then(() => {
-    toast("Código de barras copiado!", "warning");
+    toast("Código de barras copiado!", "success");
   }).catch(() => {
     prompt("Copie o código:", barcode);
   });
@@ -1487,7 +1466,7 @@ function txRow(tx) {
       <div class="tx-info">
         <div class="tx-name">${tx.description}</div>
         <div class="tx-sub">
-          ${new Date(tx.date).toLocaleDateString("pt-BR")}
+          ${new Date(tx.date + "T00:00:00").toLocaleDateString("pt-BR")}
           ${tx.category       ? `<span class="badge badge-cat">${tx.category}</span>`          : ""}
           ${bank              ? `<span class="badge badge-bank">${bank.name}</span>`            : ""}
           ${tx.payment_method ? `<span class="badge badge-method">${tx.payment_method}</span>` : ""}
@@ -1512,7 +1491,7 @@ async function saveTx() {
   const type           = document.getElementById("f-type").value;
   const description    = document.getElementById("f-desc").value.trim();
   const amount         = parseCurrency(document.getElementById("f-amount").value);
-  const category       = document.getElementById("f-cat").value    || null;
+  const category       = document.getElementById("f-cat").value    || "Outros";
   let date = document.getElementById("f-date").value;
   // Se for receita com input type=month (YYYY-MM), converte para YYYY-MM-01
   if (date && date.length === 7) date = date + "-01";
@@ -1596,9 +1575,11 @@ function clearTxForm() {
 }
 
 async function deleteTx(id) {
-  const { error } = await sb.from("transactions").delete().eq("id", id).eq("user_id", state.userId);
-  if (!error) { state.transactions = state.transactions.filter(t => t.id !== id); render(); }
-  else toast("Erro: " + error.message, "error");
+  showConfirm("Excluir este lancamento? Esta acao nao pode ser desfeita.", async () => {
+    const { error } = await sb.from("transactions").delete().eq("id", id).eq("user_id", state.userId);
+    if (!error) { state.transactions = state.transactions.filter(t => t.id !== id); render(); }
+    else toast("Erro: " + error.message, "error");
+  });
 }
 
 
@@ -1676,22 +1657,68 @@ function clearBankForm() {
 }
 
 async function deleteBank(id) {
-  const { error } = await sb.from("banks").delete().eq("id", id).eq("user_id", state.userId);
-  if (!error) { state.banks = state.banks.filter(b => b.id !== id); render(); }
-  else toast("Erro: " + error.message, "error");
+  showConfirm("Excluir este banco? O historico de transacoes vinculado sera mantido, mas o banco nao aparecera mais.", async () => {
+    const { error } = await sb.from("banks").delete().eq("id", id).eq("user_id", state.userId);
+    if (!error) { state.banks = state.banks.filter(b => b.id !== id); render(); }
+    else toast("Erro: " + error.message, "error");
+  });
 }
 
 async function quickDeposit(bankId) {
-  const amtStr = prompt("Valor do depósito (R$):\nExemplo: 150,00");
-  const amount = parseCurrency(amtStr);
-  if (!amount || isNaN(amount)) return;
-  const desc = prompt("Descrição:", "Depósito") || "Depósito";
-  const { data, error } = await sb.from("transactions").insert([{
-    user_id: state.userId, type: "receita", description: desc,
-    amount, date: today(), bank_id: bankId, category: null,
-    installment_number: 1, installment_total: 1,
-  }]).select().single();
-  if (!error && data) { state.transactions.unshift(data); render(); toast("Lançamento salvo!", "success"); }
+  const bank = state.banks.find(b => Number(b.id) === Number(bankId));
+  if (!bank) return;
+
+  const isDark  = !document.body.classList.contains("light-mode");
+  const bg2     = isDark ? "#16181f" : "#ffffff";
+  const border  = isDark ? "#2a2d3a" : "#e0e0e8";
+  const textColor = isDark ? "#e8e8e8" : "#1a1a2e";
+  const bgInput = isDark ? "#0f1117" : "#f4f5f7";
+
+  const modal = document.createElement("div");
+  modal.id = "quick-deposit-modal";
+  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9998;display:flex;align-items:center;justify-content:center;padding:1rem;font-family:system-ui,sans-serif";
+  modal.innerHTML = `
+    <div style="background:${bg2};border:1px solid ${border};border-radius:14px;padding:1.5rem;width:100%;max-width:360px">
+      <div style="font-size:15px;font-weight:600;color:${textColor};margin-bottom:4px">Deposito rapido</div>
+      <div style="font-size:12px;color:#888;margin-bottom:1.2rem">${bank.name}</div>
+      <div style="margin-bottom:.8rem">
+        <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Valor (R$)</label>
+        <input id="qd-amount" type="text" inputmode="numeric" placeholder="R$ 0,00"
+          oninput="formatCurrencyInput(this)"
+          style="background:${bgInput};border:1px solid ${border};border-radius:8px;padding:9px 12px;font-size:13px;color:${textColor};width:100%;outline:none;font-family:inherit;height:38px">
+      </div>
+      <div style="margin-bottom:1.2rem">
+        <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Descricao</label>
+        <input id="qd-desc" type="text" placeholder="Deposito"
+          style="background:${bgInput};border:1px solid ${border};border-radius:8px;padding:9px 12px;font-size:13px;color:${textColor};width:100%;outline:none;font-family:inherit;height:38px">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="document.getElementById('quick-deposit-modal').remove()" style="background:transparent;border:1px solid ${border};color:#888;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Cancelar</button>
+        <button id="qd-ok" style="background:#7F77DD;border:none;color:#fff;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500">Confirmar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+
+  document.getElementById("qd-ok").onclick = async () => {
+    const amount = parseCurrency(document.getElementById("qd-amount").value);
+    const desc   = document.getElementById("qd-desc").value.trim() || "Deposito";
+    if (!amount || isNaN(amount)) { toast("Informe um valor valido.", "warning"); return; }
+    modal.remove();
+    const { data, error } = await sb.from("transactions").insert([{
+      user_id: state.userId, type: "receita", description: desc,
+      amount, date: today(), bank_id: bankId, category: "Outros",
+      installment_number: 1, installment_total: 1,
+    }]).select().single();
+    if (!error && data) { state.transactions.unshift(data); render(); toast("Lancamento salvo!", "success"); }
+    else if (error) toast("Erro: " + error.message, "error");
+  };
+
+  setTimeout(() => {
+    const inp = document.getElementById("qd-amount");
+    if (inp) inp.focus();
+  }, 50);
 }
 
 // =====================
@@ -1719,9 +1746,11 @@ async function saveCard() {
 function clearCardForm() { document.getElementById("c-name").value = ""; }
 
 async function deleteCard(id) {
-  const { error } = await sb.from("cards").delete().eq("id", id).eq("user_id", state.userId);
-  if (!error) { state.cards = state.cards.filter(c => c.id !== id); render(); }
-  else toast("Erro: " + error.message, "error");
+  showConfirm("Excluir este cartao? Os lancamentos vinculados serao mantidos.", async () => {
+    const { error } = await sb.from("cards").delete().eq("id", id).eq("user_id", state.userId);
+    if (!error) { state.cards = state.cards.filter(c => c.id !== id); render(); }
+    else toast("Erro: " + error.message, "error");
+  });
 }
 
 // =====================
@@ -1767,9 +1796,11 @@ function clearFixedForm() {
 }
 
 async function deleteFixed(id) {
-  const { error } = await sb.from("fixed_expenses").delete().eq("id", id).eq("user_id", state.userId);
-  if (!error) { state.fixed = state.fixed.filter(f => f.id !== id); render(); }
-  else toast("Erro: " + error.message, "error");
+  showConfirm("Excluir esta conta fixa?", async () => {
+    const { error } = await sb.from("fixed_expenses").delete().eq("id", id).eq("user_id", state.userId);
+    if (!error) { state.fixed = state.fixed.filter(f => f.id !== id); render(); }
+    else toast("Erro: " + error.message, "error");
+  });
 }
 
 // =====================
@@ -1798,32 +1829,82 @@ function clearGoalForm() {
 }
 
 async function deleteGoal(id) {
-  const { error } = await sb.from("goals").delete().eq("id", id).eq("user_id", state.userId);
-  if (!error) { state.goals = state.goals.filter(g => g.id !== id); render(); }
-  else toast("Erro: " + error.message, "error");
+  showConfirm("Excluir esta meta? O progresso salvo sera perdido.", async () => {
+    const { error } = await sb.from("goals").delete().eq("id", id).eq("user_id", state.userId);
+    if (!error) { state.goals = state.goals.filter(g => g.id !== id); render(); }
+    else toast("Erro: " + error.message, "error");
+  });
 }
 
 async function promptDeposit(id) {
-  const goal   = state.goals.find(g => g.id === id);
-  const amtStr = prompt("Quanto você guardou? (R$)\nExemplo: 150,00");
-  const amount = parseCurrency(amtStr);
-  if (!amount || isNaN(amount)) return;
+  const goal = state.goals.find(g => g.id === id);
+  if (!goal) return;
 
-  const newSaved = Math.min(parseFloat(goal.target), parseFloat(goal.saved) + amount);
-  const { error } = await sb.from("goals").update({ saved: newSaved }).eq("id", id).eq("user_id", state.userId);
-  if (error) { toast("Erro: " + error.message, "error"); return; }
-  goal.saved = newSaved;
+  // Usa modal de input em vez de prompt() nativo (Bug 6)
+  const isDark    = !document.body.classList.contains("light-mode");
+  const bg2       = isDark ? "#16181f" : "#ffffff";
+  const border    = isDark ? "#2a2d3a" : "#e0e0e8";
+  const textColor = isDark ? "#e8e8e8" : "#1a1a2e";
+  const bgInput   = isDark ? "#0f1117" : "#f4f5f7";
 
-  if (goal.bank_id) {
-    const { data } = await sb.from("transactions").insert([{
-      user_id: state.userId, type: "receita",
-      description: `Depósito na meta: ${goal.name}`,
-      amount, date: today(), bank_id: goal.bank_id, category: null,
-      installment_number: 1, installment_total: 1,
-    }]).select().single();
-    if (data) state.transactions.unshift(data);
-  }
-  render();
+  const modal = document.createElement("div");
+  modal.id = "deposit-modal";
+  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9998;display:flex;align-items:center;justify-content:center;padding:1rem;font-family:system-ui,sans-serif";
+  modal.innerHTML = `
+    <div style="background:${bg2};border:1px solid ${border};border-radius:14px;padding:1.5rem;width:100%;max-width:360px">
+      <div style="font-size:15px;font-weight:600;color:${textColor};margin-bottom:4px">Depositar na meta</div>
+      <div style="font-size:12px;color:#888;margin-bottom:1.2rem">${goal.name}</div>
+      <div style="margin-bottom:1rem">
+        <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Valor (R$)</label>
+        <input id="deposit-amount" type="text" inputmode="numeric" placeholder="R$ 0,00"
+          oninput="formatCurrencyInput(this)"
+          style="background:${bgInput};border:1px solid ${border};border-radius:8px;padding:9px 12px;font-size:13px;color:${textColor};width:100%;outline:none;font-family:inherit;height:38px">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="document.getElementById('deposit-modal').remove()" style="background:transparent;border:1px solid ${border};color:#888;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Cancelar</button>
+        <button id="deposit-ok" style="background:#7F77DD;border:none;color:#fff;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500">Confirmar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+
+  document.getElementById("deposit-ok").onclick = async () => {
+    const amount = parseCurrency(document.getElementById("deposit-amount").value);
+    if (!amount || isNaN(amount)) { toast("Informe um valor valido.", "warning"); return; }
+
+    const newSaved = Math.min(parseFloat(goal.target), parseFloat(goal.saved) + amount);
+    const { error } = await sb.from("goals").update({ saved: newSaved }).eq("id", id).eq("user_id", state.userId);
+    if (error) { toast("Erro: " + error.message, "error"); return; }
+    goal.saved = newSaved;
+    modal.remove();
+
+    // Bug 5: se ha banco vinculado, cria bank_transfer (reserva interna),
+    // nao uma receita que inflaria o saldo artificialmente
+    if (goal.bank_id) {
+      const { data } = await sb.from("bank_transfers").insert([{
+        user_id: state.userId,
+        type: "saque",
+        description: "Reserva para meta: " + goal.name,
+        amount,
+        date: today(),
+        bank_id: goal.bank_id,
+      }]).select().single();
+      if (data) {
+        if (!state.bank_transfers) state.bank_transfers = [];
+        state.bank_transfers.unshift(data);
+      }
+    }
+
+    toast("Deposito registrado!", "success");
+    render();
+  };
+
+  // Foca o input apos renderizacao
+  setTimeout(() => {
+    const inp = document.getElementById("deposit-amount");
+    if (inp) inp.focus();
+  }, 50);
 }
 
 // =====================
@@ -1846,9 +1927,11 @@ async function saveCategory() {
 }
 
 async function deleteCategory(id) {
-  const { error } = await sb.from("categories").delete().eq("id", id).eq("user_id", state.userId);
-  if (!error) { state.categories = state.categories.filter(c => c.id !== id); render(); }
-  else toast("Erro: " + error.message, "error");
+  showConfirm("Excluir esta categoria? Lancamentos que a usam nao serao afetados.", async () => {
+    const { error } = await sb.from("categories").delete().eq("id", id).eq("user_id", state.userId);
+    if (!error) { state.categories = state.categories.filter(c => c.id !== id); render(); }
+    else toast("Erro: " + error.message, "error");
+  });
 }
 
 
@@ -1907,8 +1990,6 @@ function renderFaturas() {
       return normalizedInv === key;
     });
   }
-
-  const bankOptions = state.banks.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
 
   const cardsHTML = state.cards.map(card => {
     const color = card.color || "#7F77DD";
@@ -2037,7 +2118,6 @@ function renderFaturas() {
           <label>Débitar do banco (opcional)</label>
           <select id="pay-invoice-bank">
             <option value="">-- não debitar --</option>
-            ${bankOptions}
           </select>
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
@@ -2111,15 +2191,31 @@ let _payInvoiceData = null;
 
 function openPayInvoice(cardId, month, amount) {
   _payInvoiceData = { cardId: parseInt(cardId), month, amount: parseFloat(amount) };
-  const card = state.cards.find(c => Number(c.id) === parseInt(cardId));
-  const [y, m] = month.split("-");
-  const monthName = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+  const card       = state.cards.find(c => Number(c.id) === parseInt(cardId));
+  const faturaAmt  = parseFloat(amount);
+  const [y, m]     = month.split("-");
+  const monthName  = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+
+  // Monta opcoes com saldo visivel e desabilita bancos sem saldo suficiente
+  const bankSelectOptions = state.banks.map(b => {
+    const bal      = bankBalance(b);
+    const disabled = bal < faturaAmt;
+    const label    = `${b.name} — saldo: ${fmt(bal)}${disabled ? " (insuficiente)" : ""}`;
+    return `<option value="${b.id}" ${disabled ? "disabled" : ""}>${label}</option>`;
+  }).join("");
+
   document.getElementById("pay-invoice-info").innerHTML = `
     <div style="margin-bottom:4px"><strong style="color:var(--text)">${card?.name}</strong> — <span style="text-transform:capitalize">${monthName}</span></div>
-    <div style="font-size:16px;font-weight:700;color:var(--red)">${fmt(parseFloat(amount))}</div>
+    <div style="font-size:16px;font-weight:700;color:var(--red)">${fmt(faturaAmt)}</div>
   `;
-  const modal = document.getElementById("pay-invoice-modal");
-  modal.style.display = "flex";
+
+  // Atualiza o select de bancos com saldos atuais
+  const sel = document.getElementById("pay-invoice-bank");
+  if (sel) {
+    sel.innerHTML = `<option value="">-- nao debitar --</option>${bankSelectOptions}`;
+  }
+
+  document.getElementById("pay-invoice-modal").style.display = "flex";
 }
 
 function closePayInvoice() {
@@ -2133,7 +2229,44 @@ async function confirmPayInvoice() {
   const bankId = document.getElementById("pay-invoice-bank").value || null;
   const uid    = state.userId;
 
-  // Registra a fatura como paga
+  // Valida saldo do banco antes de qualquer escrita
+  if (bankId) {
+    const bank    = state.banks.find(b => Number(b.id) === Number(bankId));
+    const balance = bankBalance(bank);
+    if (balance < amount) {
+      toast(`Saldo insuficiente em ${bank.name}.<br>Saldo: ${fmt(balance)} · Fatura: ${fmt(amount)}`, "error");
+      return;
+    }
+  }
+
+  // 1. Debita do banco PRIMEIRO (se escolheu banco)
+  let txDebito = null;
+  if (bankId) {
+    const card = state.cards.find(c => Number(c.id) === Number(cardId));
+    const [y, m] = month.split("-");
+    const monthName = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+    const { data: tx, error: txErr } = await sb.from("transactions").insert([{
+      user_id:            uid,
+      type:               "despesa",
+      description:        `Pagamento fatura ${card?.name} — ${monthName}`,
+      amount,
+      date:               today(),
+      bank_id:            parseInt(bankId),
+      card_id:            null,
+      category:           "Fatura",
+      payment_method:     "PIX",
+      installment_number: 1,
+      installment_total:  1,
+    }]).select().single();
+
+    if (txErr || !tx) {
+      toast("Erro ao debitar do banco: " + (txErr?.message || "resposta vazia"), "error");
+      return;
+    }
+    txDebito = tx;
+  }
+
+  // 2. Registra a fatura como paga
   const { data: inv, error: invErr } = await sb.from("invoices").insert([{
     user_id: uid,
     card_id: cardId,
@@ -2142,31 +2275,21 @@ async function confirmPayInvoice() {
     bank_id: bankId ? parseInt(bankId) : null,
   }]).select().single();
 
-  if (invErr) { toast("Erro: " + invErr.message, "error"); return; }
-  state.invoices.unshift(inv);
-
-  // Se escolheu banco, debita o valor
-  if (bankId) {
-    const card = state.cards.find(c => c.id === cardId);
-    const [y, m] = month.split("-");
-    const monthName = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
-    const { data: tx } = await sb.from("transactions").insert([{
-      user_id:     uid,
-      type:        "despesa",
-      description: `Pagamento fatura ${card?.name} — ${monthName}`,
-      amount,
-      date:        today(),
-      bank_id:     parseInt(bankId),
-      card_id:     null,
-      category:    null,
-      payment_method: "PIX",
-      installment_number: 1,
-      installment_total:  1,
-    }]).select().single();
-    if (tx) state.transactions.unshift(tx);
+  if (invErr || !inv) {
+    // Desfaz o debito se o registro da fatura falhou
+    if (txDebito) {
+      await sb.from("transactions").delete().eq("id", txDebito.id);
+    }
+    toast("Erro ao registrar pagamento: " + (invErr?.message || "resposta vazia"), "error");
+    return;
   }
 
+  // 3. Atualiza state local
+  if (txDebito) state.transactions.unshift(txDebito);
+  state.invoices.unshift(inv);
+
   closePayInvoice();
+  toast("Fatura paga com sucesso!", "success");
   render();
 }
 // =====================
@@ -2574,7 +2697,7 @@ function editTx(id) {
       description:    getEditField("desc").value.trim(),
       amount:         parseCurrency(getEditField("amount").value),
       date:           getEditField("date").value,
-      category:       getEditField("cat").value    || null,
+      category:       getEditField("cat").value    || "Outros",
       bank_id:        getEditField("bank").value   ? parseInt(getEditField("bank").value)   : null,
       payment_method: getEditField("method").value || null,
       card_id:        getEditField("card").value   ? parseInt(getEditField("card").value)   : null,
