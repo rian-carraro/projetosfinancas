@@ -177,9 +177,10 @@ let state = {
   filterCat:    "",
   filterCard:   "",
   filterBank:   "",
-  boletos:      [],
-  paid_boletos: [],
-  invoices:     [],
+  boletos:        [],
+  paid_boletos:   [],
+  invoices:       [],
+  fixed_payments: [],
 };
 
 // =====================
@@ -303,11 +304,13 @@ function resetState() {
   state.fixed        = [];
   state.banks        = [];
   state.bank_transfers = [];
-  state.boletos      = [];
-  state.paid_boletos = [];
-  state.invoices     = [];
-  state.dashMonth    = "";
-  state.page         = "dashboard";
+  state.boletos        = [];
+  state.paid_boletos   = [];
+  state.invoices       = [];
+  state.fixed_payments = [];
+  state.dashMonth      = "";
+  state.faturaTab      = "cartoes";
+  state.page           = "dashboard";
 }
 
 // =====================
@@ -362,6 +365,14 @@ async function loadData() {
       state.paid_boletos = r9.data || [];
     } catch (e) {
       state.paid_boletos = [];
+    }
+
+    // Pagamentos de contas fixas
+    try {
+      const r10 = await sb.from("fixed_payments").select("*").eq("user_id", uid).order("created_at", { ascending: false });
+      state.fixed_payments = r10.data || [];
+    } catch (e) {
+      state.fixed_payments = [];
     }
 
     return true;
@@ -1095,10 +1106,13 @@ function renderContasFixas() {
   document.getElementById("content").innerHTML = `
     <div class="section">
       <div class="section-title">Nova Conta Fixa</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:1rem;margin-top:-6px">
+        Contas fixas sao recorrentes todo mes (aluguel, agua, luz, gas, etc). Para registrar o pagamento de um mes especifico, acesse Faturas.
+      </div>
       <div class="form-grid">
         <div class="form-group">
-          <label>Descrição *</label>
-          <input autocomplete="off" id="fx-desc" placeholder="Ex: Aluguel" autocomplete="off">
+          <label>Descricao *</label>
+          <input autocomplete="off" id="fx-desc" placeholder="Ex: Aluguel">
         </div>
         <div class="form-group">
           <label>Valor (R$) *</label>
@@ -1113,18 +1127,19 @@ function renderContasFixas() {
           <select id="fx-cat"><option value="">-- nenhuma --</option>${catOptions}</select>
         </div>
         <div class="form-group">
-          <label>Método de pagamento</label>
-          <select id="fx-method" onchange="onFixedMethodChange()">
+          <label>Metodo de pagamento</label>
+          <select id="fx-method">
             <option value="">-- nenhum --</option>
             ${METHODS.map(m => `<option>${m}</option>`).join("")}
           </select>
         </div>
-        <div class="form-group" id="fx-boleto-group" style="display:none">
-          <label>Boleto vinculado (opcional)</label>
-          <select id="fx-boleto">
-            <option value="">-- selecione --</option>
-            ${state.boletos.map(b => `<option value="${b.id}">${b.description} · ${new Date(b.due_date+"T00:00:00").toLocaleDateString("pt-BR")} · ${fmt(b.amount)}</option>`).join("")}
-          </select>
+        <div class="form-group">
+          <label>Arquivo (boleto/PDF, opcional)</label>
+          <label for="fx-file" id="fx-file-label" style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;color:var(--text3);transition:border-color .15s" onmouseover="this.style.borderColor='var(--purple)'" onmouseout="this.style.borderColor='var(--border)'">
+            <span style="background:var(--purple);color:#fff;padding:4px 12px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap">Escolher arquivo</span>
+            <span id="fx-file-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Nenhum arquivo selecionado</span>
+          </label>
+          <input id="fx-file" type="file" accept=".pdf,image/*" style="display:none" onchange="document.getElementById('fx-file-name').textContent=this.files[0]?.name||'Nenhum arquivo selecionado'">
         </div>
       </div>
       <div class="form-actions">
@@ -1135,30 +1150,26 @@ function renderContasFixas() {
 
     <div class="section">
       <div class="section-title">
-        Contas Fixas
-        <span style="font-size:13px;color:#D85A30;font-weight:400">${fmt(total)}/mês</span>
+        Contas Fixas cadastradas
+        <span style="font-size:13px;color:var(--red);font-weight:400">${fmt(total)}/mes</span>
       </div>
-      ${state.fixed.map(f => `
+      ${state.fixed.length ? state.fixed.map(f => `
         <div class="fixed-item">
           <div>
-            <div style="font-size:13.5px;font-weight:500">${f.description}</div>
-            <div style="font-size:11px;color:#555;margin-top:2px">
+            <div style="font-size:13.5px;font-weight:500;color:var(--text)">${f.description}</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">
               Vence dia ${f.due_day}
               ${f.category       ? " · " + f.category       : ""}
               ${f.payment_method ? " · " + f.payment_method : ""}
-              ${f.boleto_id ? (() => {
-                const bol = state.boletos.find(b => Number(b.id) === Number(f.boleto_id));
-                return bol ? `<span class="badge" style="background:#1a1a2e;color:#7F77DD;margin-left:4px">Boleto: ${bol.description}</span>` : "";
-              })() : ""}
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:14px;font-weight:600;color:#D85A30">${fmt(f.amount)}</span>
-            <button class="btn-icon" onclick="editFixed(${f.id})" title="Editar" style="color:#7F77DD;font-size:13px">✎</button>
-            <button class="btn-icon" onclick="deleteFixed(${f.id})" title="Excluir">✕</button>
+            <span style="font-size:14px;font-weight:600;color:var(--red)">${fmt(f.amount)}</span>
+            <button class="btn-icon" onclick="editFixed(${f.id})" title="Editar" style="color:var(--purple);font-size:13px">&#9998;</button>
+            <button class="btn-icon" onclick="deleteFixed(${f.id})" title="Excluir">&#10005;</button>
           </div>
         </div>
-      `).join("") || `<div class="empty">Nenhuma conta fixa cadastrada</div>`}
+      `).join("") : `<div class="empty">Nenhuma conta fixa cadastrada</div>`}
     </div>
   `;
 }
@@ -1756,19 +1767,6 @@ async function deleteCard(id) {
 // =====================
 // ACTIONS — FIXED
 // =====================
-function onFixedMethodChange() {
-  const method      = document.getElementById("fx-method")?.value;
-  const boletoGroup = document.getElementById("fx-boleto-group");
-  if (!boletoGroup) return;
-  // form-group usa flex — precisa setar flex ao mostrar
-  boletoGroup.style.display = method === "Boleto" ? "flex" : "none";
-  boletoGroup.style.flexDirection = "column";
-  if (method !== "Boleto") {
-    const sel = document.getElementById("fx-boleto");
-    if (sel) sel.value = "";
-  }
-}
-
 async function saveFixed() {
   const uid            = state.userId;
   const description    = document.getElementById("fx-desc").value.trim();
@@ -1776,23 +1774,36 @@ async function saveFixed() {
   const due_day        = parseInt(document.getElementById("fx-due").value) || null;
   const category       = document.getElementById("fx-cat").value    || null;
   const payment_method = document.getElementById("fx-method").value || null;
-  const boleto_id      = document.getElementById("fx-boleto")?.value || null;
+  const fileInput      = document.getElementById("fx-file");
+  const file           = fileInput?.files?.[0] || null;
 
-  if (!uid)          return toast("Sessão expirada. Faça login novamente.", "warning");
-  if (!description)  return toast("Informe a descrição.", "warning");
-  if (!amount)       return toast("Informe o valor.", "warning");
-  if (!due_day)      return toast("Informe o dia de vencimento.", "warning");
+  if (!uid)         return toast("Sessao expirada. Faca login novamente.", "warning");
+  if (!description) return toast("Informe a descricao.", "warning");
+  if (!amount)      return toast("Informe o valor.", "warning");
+  if (!due_day)     return toast("Informe o dia de vencimento.", "warning");
+
+  let file_path = null;
+  if (file) {
+    const ext = file.name.split(".").pop();
+    const path = `${uid}/fixed/${Date.now()}.${ext}`;
+    const { error: upErr } = await sb.storage.from("boletos").upload(path, file, { contentType: file.type });
+    if (upErr) return toast("Erro ao enviar arquivo: " + upErr.message, "error");
+    file_path = path;
+  }
 
   const { data, error } = await sb.from("fixed_expenses").insert([{
-    description, amount, due_day, category, payment_method, user_id: uid,
-    boleto_id: boleto_id ? parseInt(boleto_id) : null,
+    description, amount, due_day, category, payment_method, user_id: uid, file_path,
   }]).select().single();
   if (!error && data) { state.fixed.push(data); render(); toast("Conta fixa salva!", "success"); }
   else if (error) toast("Erro: " + error.message, "error");
 }
 
 function clearFixedForm() {
-  ["fx-desc","fx-amount"].forEach(id => document.getElementById(id).value = "");
+  ["fx-desc","fx-amount"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+  const fi = document.getElementById("fx-file");
+  if (fi) fi.value = "";
+  const fn = document.getElementById("fx-file-name");
+  if (fn) fn.textContent = "Nenhum arquivo selecionado";
 }
 
 async function deleteFixed(id) {
@@ -1940,23 +1951,49 @@ async function deleteCategory(id) {
 // FATURAS
 // =====================
 function renderFaturas() {
+  // aba ativa: "cartoes" ou "fixas"
+  if (!state.faturaTab) state.faturaTab = "cartoes";
+  const tab = state.faturaTab;
+
+  const tabBtn = (id, label) => `
+    <button onclick="state.faturaTab='${id}';render()"
+      style="padding:8px 20px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;
+             background:${tab===id?"var(--purple)":"transparent"};
+             color:${tab===id?"#fff":"var(--text2)"};
+             transition:all .15s">
+      ${label}
+    </button>`;
+
+  const tabsHTML = `
+    <div style="display:flex;gap:6px;margin-bottom:1.4rem;background:var(--bg3);padding:4px;border-radius:10px;width:fit-content">
+      ${tabBtn("cartoes","Cartoes")}
+      ${tabBtn("fixas","Contas Fixas")}
+    </div>`;
+
+  if (tab === "cartoes") {
+    renderFaturasCartoes(tabsHTML);
+  } else {
+    renderFaturasFixas(tabsHTML);
+  }
+}
+
+// ---------- ABA CARTOES ----------
+function renderFaturasCartoes(tabsHTML) {
   if (state.cards.length === 0) {
-    document.getElementById("content").innerHTML = `
+    document.getElementById("content").innerHTML = tabsHTML + `
       <div class="empty" style="padding:4rem">
-        Nenhum cartão cadastrado.<br>
-        <button class="btn btn-primary" style="margin-top:1rem" onclick="goTo('cartoes')">Cadastrar cartão</button>
+        Nenhum cartao cadastrado.<br>
+        <button class="btn btn-primary" style="margin-top:1rem" onclick="goTo('cartoes')">Cadastrar cartao</button>
       </div>`;
     return;
   }
 
-  const now       = new Date();
-  const thisYear  = now.getFullYear();
-  const thisMonth = now.getMonth();
-
+  const now        = new Date();
+  const thisYear   = now.getFullYear();
+  const thisMonth  = now.getMonth();
   const faturaMonths = [];
   for (let i = 0; i <= 5; i++) {
-    let m = thisMonth + i;
-    let y = thisYear;
+    let m = thisMonth + i, y = thisYear;
     if (m > 11) { m -= 12; y++; }
     faturaMonths.push({ year: y, month: m });
   }
@@ -1983,35 +2020,26 @@ function renderFaturas() {
     const key = `${year}-${String(month+1).padStart(2,"0")}`;
     return state.invoices.some(inv => {
       if (Number(inv.card_id) !== Number(cardId)) return false;
-      const invMonth = String(inv.month || "").trim();
-      // Aceita formato YYYY-MM ou YYYY-M
-      const [iy, im] = invMonth.split("-");
-      const normalizedInv = `${iy}-${String(parseInt(im)).padStart(2,"0")}`;
-      return normalizedInv === key;
+      const [iy, im] = String(inv.month||"").trim().split("-");
+      return `${iy}-${String(parseInt(im)).padStart(2,"0")}` === key;
     });
   }
 
   const cardsHTML = state.cards.map(card => {
     const color = card.color || "#7F77DD";
-
-    // "Fatura atual" = primeiro mês não pago que tenha lançamentos
     const firstUnpaid = faturaMonths.find(({ year, month }) =>
       !isInvoicePaid(card.id, year, month) && getFaturaTotal(card.id, year, month) > 0
     );
-    const currentFaturaTotal = firstUnpaid
-      ? getFaturaTotal(card.id, firstUnpaid.year, firstUnpaid.month)
-      : 0;
+    const currentFaturaTotal = firstUnpaid ? getFaturaTotal(card.id, firstUnpaid.year, firstUnpaid.month) : 0;
 
     const rowsHTML = faturaMonths.map(({ year, month }) => {
       const total     = getFaturaTotal(card.id, year, month);
       const paid      = isInvoicePaid(card.id, year, month);
       const key       = `${year}-${String(month+1).padStart(2,"0")}`;
-      // "Atual" = é o primeiro mês não pago com lançamentos deste cartão
       const isNow     = firstUnpaid && year === firstUnpaid.year && month === firstUnpaid.month;
-      const monthName = new Date(year, month, 1).toLocaleString("pt-BR", { month: "long", year: "numeric" });
+      const monthName = new Date(year, month, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
       const items     = getFaturaItems(card.id, year, month);
       if (total === 0 && !paid) return "";
-
       return `
         <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--bg3);gap:10px;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:8px;min-width:0">
@@ -2022,7 +2050,7 @@ function renderFaturas() {
                 ${isNow ? `<span style="font-size:10px;background:${color};color:#fff;padding:1px 7px;border-radius:99px">atual</span>` : ""}
                 ${paid  ? `<span style="font-size:10px;background:var(--bg3);color:var(--green);padding:1px 7px;border-radius:99px">paga</span>` : ""}
               </div>
-              <div style="font-size:11px;color:var(--text3);margin-top:2px">${items.length} lançamento(s)</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">${items.length} lancamento(s)</div>
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
@@ -2030,8 +2058,7 @@ function renderFaturas() {
             <button class="btn btn-sm btn-secondary" onclick="openFaturaModal('${card.id}','${key}')">Ver fatura</button>
             ${!paid && total > 0 ? `<button class="btn btn-sm btn-primary" onclick="openPayInvoice('${card.id}','${key}','${total}')">Pagar</button>` : ""}
           </div>
-        </div>
-      `;
+        </div>`;
     }).join("");
 
     return `
@@ -2044,17 +2071,15 @@ function renderFaturas() {
           </div>
           <span style="font-size:13px;color:var(--red);font-weight:600">Fatura atual: ${fmt(currentFaturaTotal)}</span>
         </div>
-        ${rowsHTML || `<div class="empty" style="padding:.5rem">Nenhuma compra nos próximos meses</div>`}
-      </div>
-    `;
+        ${rowsHTML || `<div class="empty" style="padding:.5rem">Nenhuma compra nos proximos meses</div>`}
+      </div>`;
   }).join("");
 
-  document.getElementById("content").innerHTML = `
-    ${cardsHTML}
+  document.getElementById("content").innerHTML = tabsHTML + cardsHTML + `
 
     ${state.invoices.length ? `
     <div class="section">
-      <div class="section-title">Histórico de faturas pagas</div>
+      <div class="section-title">Historico de faturas pagas</div>
       ${state.invoices.slice(0,10).map(inv => {
         const card = state.cards.find(c => Number(c.id) === Number(inv.card_id));
         const bank = state.banks.find(b => Number(b.id) === Number(inv.bank_id));
@@ -2063,16 +2088,15 @@ function renderFaturas() {
         return `
           <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--bg3);font-size:13px;flex-wrap:wrap;gap:6px">
             <div>
-              <span style="font-weight:500;color:var(--text)">${card?.name || "Cartão"}</span>
+              <span style="font-weight:500;color:var(--text)">${card?.name||"Cartao"}</span>
               <span style="color:var(--text3);margin-left:8px;text-transform:capitalize">${monthName}</span>
               ${bank ? `<span style="color:var(--text3);margin-left:8px">· ${bank.name}</span>` : ""}
             </div>
             <div style="display:flex;align-items:center;gap:8px">
               <span style="font-weight:600;color:var(--green)">${fmt(inv.amount)}</span>
-              <button class="btn btn-secondary btn-sm" onclick="undoInvoice(${inv.id})" title="Desfazer pagamento">Desfazer</button>
+              <button class="btn btn-secondary btn-sm" onclick="undoInvoice(${inv.id})">Desfazer</button>
             </div>
-          </div>
-        `;
+          </div>`;
       }).join("")}
     </div>` : ""}
 
@@ -2085,48 +2109,281 @@ function renderFaturas() {
       </div>
     </div>
 
-    ${(state.paid_boletos||[]).length ? `
-    <div class="section">
-      <div class="section-title">Histórico de boletos pagos</div>
-      ${state.paid_boletos.slice(0,20).map(b => {
-        const paidDate = new Date(b.paid_at).toLocaleDateString("pt-BR");
-        const dueDate  = new Date(b.due_date+"T00:00:00").toLocaleDateString("pt-BR");
-        return `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--bg3);flex-wrap:wrap;gap:6px">
-            <div style="min-width:0">
-              <div style="font-size:13px;font-weight:500;color:var(--text)">${b.description}</div>
-              <div style="font-size:11px;color:var(--text3);margin-top:2px">
-                Vencimento: ${dueDate} · Pago em: ${paidDate}
-                ${b.barcode ? `<span style="margin-left:8px;font-family:monospace;font-size:10px">${b.barcode.substring(0,20)}...</span>` : ""}
-              </div>
-            </div>
-            <span style="font-weight:600;color:var(--green);white-space:nowrap">${fmt(b.amount)}</span>
-          </div>
-        `;
-      }).join("")}
-    </div>` : ""}
-
-    <!-- Modal pagar fatura -->
+    <!-- Modal pagar fatura cartao -->
     <div id="pay-invoice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:101;align-items:center;justify-content:center;padding:1rem">
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:1.5rem;width:100%;max-width:400px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
           <span style="font-size:15px;font-weight:600;color:var(--text)">Pagar fatura</span>
-          <button class="btn-icon" onclick="closePayInvoice()">✕</button>
+          <button class="btn-icon" onclick="closePayInvoice()">&#10005;</button>
         </div>
         <div id="pay-invoice-info" style="background:var(--bg3);border-radius:8px;padding:12px;margin-bottom:1rem;font-size:13px;color:var(--text2)"></div>
         <div class="form-group">
-          <label>Débitar do banco (opcional)</label>
-          <select id="pay-invoice-bank">
-            <option value="">-- não debitar --</option>
-          </select>
+          <label>Debitar do banco (opcional)</label>
+          <select id="pay-invoice-bank"><option value="">-- nao debitar --</option></select>
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
           <button class="btn btn-secondary" onclick="closePayInvoice()">Cancelar</button>
           <button class="btn btn-primary" onclick="confirmPayInvoice()">Confirmar pagamento</button>
         </div>
       </div>
-    </div>
-  `;
+    </div>`;
+}
+
+// ---------- ABA CONTAS FIXAS ----------
+function renderFaturasFixas(tabsHTML) {
+  if (state.fixed.length === 0) {
+    document.getElementById("content").innerHTML = tabsHTML + `
+      <div class="empty" style="padding:4rem">
+        Nenhuma conta fixa cadastrada.<br>
+        <button class="btn btn-primary" style="margin-top:1rem" onclick="goTo('contas-fixas')">Cadastrar conta fixa</button>
+      </div>`;
+    return;
+  }
+
+  const now       = new Date();
+  const thisYear  = now.getFullYear();
+  const thisMonth = now.getMonth();
+
+  // Mostra mes atual + 2 meses anteriores (em aberto ou pagos)
+  const fixaMonths = [];
+  for (let i = -2; i <= 0; i++) {
+    let m = thisMonth + i, y = thisYear;
+    if (m < 0)  { m += 12; y--; }
+    if (m > 11) { m -= 12; y++; }
+    fixaMonths.push({ year: y, month: m });
+  }
+
+  function isFixedPaid(fixedId, year, month) {
+    const key = `${year}-${String(month+1).padStart(2,"0")}`;
+    return (state.fixed_payments || []).some(p =>
+      Number(p.fixed_id) === Number(fixedId) && p.month === key
+    );
+  }
+
+  function getFixedPayment(fixedId, year, month) {
+    const key = `${year}-${String(month+1).padStart(2,"0")}`;
+    return (state.fixed_payments || []).find(p =>
+      Number(p.fixed_id) === Number(fixedId) && p.month === key
+    );
+  }
+
+  const fixasHTML = state.fixed.map(f => {
+    const rowsHTML = fixaMonths.map(({ year, month }) => {
+      const key       = `${year}-${String(month+1).padStart(2,"0")}`;
+      const paid      = isFixedPaid(f.id, year, month);
+      const payment   = getFixedPayment(f.id, year, month);
+      const isNow     = year === thisYear && month === thisMonth;
+      const monthName = new Date(year, month, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+      const bank      = payment?.bank_id ? state.banks.find(b => Number(b.id) === Number(payment.bank_id)) : null;
+
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--bg3);gap:10px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <div style="width:3px;height:36px;border-radius:99px;background:${paid?"var(--border)":isNow?"var(--red)":"var(--border2)"};flex-shrink:0"></div>
+            <div>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <span style="font-size:13px;font-weight:600;color:var(--text);text-transform:capitalize">${monthName}</span>
+                ${isNow ? `<span style="font-size:10px;background:var(--purple);color:#fff;padding:1px 7px;border-radius:99px">atual</span>` : ""}
+                ${paid  ? `<span style="font-size:10px;background:var(--bg3);color:var(--green);padding:1px 7px;border-radius:99px">paga</span>` : ""}
+              </div>
+              ${bank ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">Debitado de: ${bank.name}</div>` : ""}
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+            <span style="font-size:15px;font-weight:700;color:${paid?"var(--text3)":"var(--red)"}">${fmt(f.amount)}</span>
+            ${!paid
+              ? `<button class="btn btn-sm btn-primary" onclick="openPayFixed(${f.id},'${key}',${f.amount})">Pagar</button>`
+              : `${payment?.file_path ? `<button class="btn btn-sm btn-secondary" onclick="downloadFixedFile('${payment.file_path}')">Abrir arquivo</button>` : ""}
+                 <button class="btn btn-sm btn-secondary" onclick="undoFixedPayment(${payment.id})">Desfazer</button>`
+            }
+          </div>
+        </div>`;
+    }).join("");
+
+    return `
+      <div class="section" style="border-top:3px solid var(--purple)">
+        <div class="section-title">
+          <div>
+            <span>${f.description}</span>
+            <span style="font-size:11px;color:var(--text3);font-weight:400;margin-left:8px">
+              Vence dia ${f.due_day||"?"}${f.category ? " · " + f.category : ""}
+            </span>
+          </div>
+          <span style="font-size:13px;color:var(--red);font-weight:600">${fmt(f.amount)}/mes</span>
+        </div>
+        ${rowsHTML}
+      </div>`;
+  }).join("");
+
+  document.getElementById("content").innerHTML = tabsHTML + fixasHTML + `
+    <!-- Modal pagar conta fixa -->
+    <div id="pay-fixed-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:101;align-items:center;justify-content:center;padding:1rem">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:1.5rem;width:100%;max-width:420px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
+          <span style="font-size:15px;font-weight:600;color:var(--text)">Pagar conta fixa</span>
+          <button class="btn-icon" onclick="closePayFixed()">&#10005;</button>
+        </div>
+        <div id="pay-fixed-info" style="background:var(--bg3);border-radius:8px;padding:12px;margin-bottom:1rem;font-size:13px;color:var(--text2)"></div>
+        <div class="form-group">
+          <label>Debitar do banco (opcional)</label>
+          <select id="pay-fixed-bank"><option value="">-- nao debitar --</option></select>
+        </div>
+        <div class="form-group" style="margin-top:8px">
+          <label>Anexar boleto/comprovante (opcional)</label>
+          <label for="pay-fixed-file" id="pay-fixed-file-label" style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;color:var(--text3);transition:border-color .15s" onmouseover="this.style.borderColor='var(--purple)'" onmouseout="this.style.borderColor='var(--border)'">
+            <span style="background:var(--purple);color:#fff;padding:4px 12px;border-radius:6px;font-size:12px;font-weight:500;white-space:nowrap">Escolher arquivo</span>
+            <span id="pay-fixed-file-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Nenhum arquivo selecionado</span>
+          </label>
+          <input id="pay-fixed-file" type="file" accept=".pdf,image/*" style="display:none" onchange="document.getElementById('pay-fixed-file-name').textContent=this.files[0]?.name||'Nenhum arquivo selecionado'">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
+          <button class="btn btn-secondary" onclick="closePayFixed()">Cancelar</button>
+          <button class="btn btn-primary" onclick="confirmPayFixed()">Confirmar pagamento</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ---------- PAGAR CONTA FIXA ----------
+let _payFixedData = null;
+
+function openPayFixed(fixedId, month, amount) {
+  const fixed = state.fixed.find(f => Number(f.id) === Number(fixedId));
+  if (!fixed) return;
+  _payFixedData = { fixedId: Number(fixedId), month, amount: parseFloat(amount) };
+
+  const [y, m]    = month.split("-");
+  const monthName = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+  const faturaAmt = parseFloat(amount);
+
+  document.getElementById("pay-fixed-info").innerHTML = `
+    <div style="margin-bottom:4px"><strong style="color:var(--text)">${fixed.description}</strong> — <span style="text-transform:capitalize">${monthName}</span></div>
+    <div style="font-size:16px;font-weight:700;color:var(--red)">${fmt(faturaAmt)}</div>`;
+
+  const bankOpts = state.banks.map(b => {
+    const bal      = bankBalance(b);
+    const disabled = bal < faturaAmt;
+    return `<option value="${b.id}" ${disabled?"disabled":""}>${b.name} — saldo: ${fmt(bal)}${disabled?" (insuficiente)":""}</option>`;
+  }).join("");
+  document.getElementById("pay-fixed-bank").innerHTML = `<option value="">-- nao debitar --</option>${bankOpts}`;
+  document.getElementById("pay-fixed-modal").style.display = "flex";
+}
+
+function closePayFixed() {
+  document.getElementById("pay-fixed-modal").style.display = "none";
+  _payFixedData = null;
+}
+
+async function confirmPayFixed() {
+  if (!_payFixedData) return;
+  const { fixedId, month, amount } = _payFixedData;
+  const bankId    = document.getElementById("pay-fixed-bank").value || null;
+  const fileInput = document.getElementById("pay-fixed-file");
+  const file      = fileInput?.files?.[0] || null;
+  const uid       = state.userId;
+
+  if (bankId) {
+    const bank    = state.banks.find(b => Number(b.id) === Number(bankId));
+    const balance = bankBalance(bank);
+    if (balance < amount) {
+      toast(`Saldo insuficiente em ${bank.name}.<br>Saldo: ${fmt(balance)} · Conta: ${fmt(amount)}`, "error");
+      return;
+    }
+  }
+
+  // Upload do arquivo se houver
+  let file_path = null;
+  if (file) {
+    const ext  = file.name.split(".").pop();
+    const path = `${uid}/fixed-payments/${fixedId}-${month}.${ext}`;
+    const { error: upErr } = await sb.storage.from("boletos").upload(path, file, { contentType: file.type, upsert: true });
+    if (upErr) { toast("Erro ao enviar arquivo: " + upErr.message, "error"); return; }
+    file_path = path;
+  }
+
+  // 1. Debita do banco primeiro
+  let txDebito = null;
+  if (bankId) {
+    const fixed = state.fixed.find(f => Number(f.id) === Number(fixedId));
+    const [y, m] = month.split("-");
+    const monthName = new Date(parseInt(y), parseInt(m)-1, 1).toLocaleString("pt-BR", { month:"long", year:"numeric" });
+    const { data: tx, error: txErr } = await sb.from("transactions").insert([{
+      user_id:            uid,
+      type:               "despesa",
+      description:        `Pagamento ${fixed?.description} — ${monthName}`,
+      amount,
+      date:               today(),
+      bank_id:            parseInt(bankId),
+      card_id:            null,
+      category:           fixed?.category || "Contas Fixas",
+      payment_method:     fixed?.payment_method || "PIX",
+      installment_number: 1,
+      installment_total:  1,
+    }]).select().single();
+    if (txErr || !tx) {
+      toast("Erro ao debitar do banco: " + (txErr?.message || "resposta vazia"), "error");
+      return;
+    }
+    txDebito = tx;
+  }
+
+  // 2. Registra o pagamento
+  const { data: fp, error: fpErr } = await sb.from("fixed_payments").insert([{
+    user_id:   uid,
+    fixed_id:  fixedId,
+    month,
+    amount,
+    bank_id:   bankId ? parseInt(bankId) : null,
+    tx_id:     txDebito?.id || null,
+    file_path,
+  }]).select().single();
+
+  if (fpErr || !fp) {
+    if (txDebito) await sb.from("transactions").delete().eq("id", txDebito.id);
+    toast("Erro ao registrar pagamento: " + (fpErr?.message || "resposta vazia"), "error");
+    return;
+  }
+
+  if (txDebito) state.transactions.unshift(txDebito);
+  if (!state.fixed_payments) state.fixed_payments = [];
+  state.fixed_payments.unshift(fp);
+
+  // Limpa o input de arquivo
+  if (fileInput) { fileInput.value = ""; }
+  const fn = document.getElementById("pay-fixed-file-name");
+  if (fn) fn.textContent = "Nenhum arquivo selecionado";
+
+  closePayFixed();
+  toast("Conta fixa paga!", "success");
+  render();
+}
+
+async function undoFixedPayment(id) {
+  showConfirm("Desfazer este pagamento?", async () => {
+    const fp = (state.fixed_payments || []).find(p => p.id === id);
+    if (!fp) return;
+
+    if (fp.tx_id) {
+      await sb.from("transactions").delete().eq("id", fp.tx_id);
+      state.transactions = state.transactions.filter(t => t.id !== fp.tx_id);
+    }
+    if (fp.file_path) {
+      await sb.storage.from("boletos").remove([fp.file_path]);
+    }
+
+    const { error } = await sb.from("fixed_payments").delete().eq("id", id).eq("user_id", state.userId);
+    if (!error) {
+      state.fixed_payments = state.fixed_payments.filter(p => p.id !== id);
+      render();
+    } else toast("Erro: " + error.message, "error");
+  });
+}
+
+async function downloadFixedFile(filePath) {
+  const { data, error } = await sb.storage.from("boletos").createSignedUrl(filePath, 60);
+  if (!error && data?.signedUrl) {
+    window.open(data.signedUrl, "_blank");
+  } else toast("Erro ao abrir arquivo.", "warning");
 }
 
 function openFaturaModal(cardId, month) {
