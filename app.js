@@ -1780,11 +1780,66 @@ function clearTxForm() {
 }
 
 async function deleteTx(id) {
-  showConfirm("Excluir este lancamento? Esta acao nao pode ser desfeita.", async () => {
-    const { error } = await sb.from("transactions").delete().eq("id", id).eq("user_id", state.userId);
-    if (!error) { state.transactions = state.transactions.filter(t => t.id !== id); render(); }
-    else toast("Erro: " + error.message, "error");
-  });
+  const tx = state.transactions.find(t => t.id === id);
+  if (!tx) return;
+
+  // Se for parcelado, pergunta o escopo
+  if (tx.installment_total > 1) {
+    const baseName = tx.description.replace(/\s*\(\d+\/\d+\)$/, "").trim();
+    const group = state.transactions.filter(t =>
+      t.installment_total === tx.installment_total &&
+      Number(t.card_id) === Number(tx.card_id) &&
+      t.description.replace(/\s*\(\d+\/\d+\)$/, "").trim() === baseName
+    );
+
+    _showDeleteScope(
+      `Excluir <strong>${baseName}</strong>`,
+      `Esta compra tem <strong>${group.length} parcela(s)</strong>. O que deseja excluir?`,
+      "Esta parcela apenas",
+      `Todas as ${group.length} parcelas`,
+      async (all) => {
+        const ids = all ? group.map(t => t.id) : [id];
+        const { error } = await sb.from("transactions").delete().in("id", ids);
+        if (!error) {
+          state.transactions = state.transactions.filter(t => !ids.includes(t.id));
+          render();
+          toast(`${ids.length} lançamento(s) excluído(s).`, "success");
+        } else toast("Erro: " + error.message, "error");
+      }
+    );
+  } else {
+    showConfirm("Excluir este lançamento? Esta ação não pode ser desfeita.", async () => {
+      const { error } = await sb.from("transactions").delete().eq("id", id).eq("user_id", state.userId);
+      if (!error) { state.transactions = state.transactions.filter(t => t.id !== id); render(); }
+      else toast("Erro: " + error.message, "error");
+    });
+  }
+}
+
+// Modal de escopo: parcela única vs grupo inteiro
+function _showDeleteScope(title, body, labelOne, labelAll, onConfirm) {
+  const isDark  = !document.body.classList.contains("light-mode");
+  const bg2     = isDark ? "#16181f" : "#ffffff";
+  const border  = isDark ? "#2a2d3a" : "#e0e0e8";
+  const text    = isDark ? "#e8e8e8" : "#1a1a2e";
+
+  const el = document.createElement("div");
+  el.id = "scope-modal";
+  el.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9998;display:flex;align-items:center;justify-content:center;padding:1rem;font-family:system-ui,sans-serif";
+  el.innerHTML = `
+    <div style="background:${bg2};border:1px solid ${border};border-radius:14px;padding:1.5rem;width:100%;max-width:380px">
+      <div style="font-size:15px;font-weight:600;color:${text};margin-bottom:.5rem">${title}</div>
+      <div style="font-size:13px;color:#888;margin-bottom:1.4rem;line-height:1.6">${body}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button id="scope-one" style="background:transparent;border:1px solid ${border};color:${text};padding:10px 16px;border-radius:8px;cursor:pointer;font-size:13px;text-align:left">${labelOne}</button>
+        <button id="scope-all" style="background:#D85A30;border:none;color:#fff;padding:10px 16px;border-radius:8px;cursor:pointer;font-size:13px;text-align:left">${labelAll}</button>
+        <button onclick="document.getElementById('scope-modal').remove()" style="background:transparent;border:1px solid ${border};color:#888;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px">Cancelar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  el.addEventListener("click", e => { if (e.target === el) el.remove(); });
+  document.getElementById("scope-one").onclick = () => { el.remove(); onConfirm(false); };
+  document.getElementById("scope-all").onclick = () => { el.remove(); onConfirm(true); };
 }
 
 
@@ -3126,40 +3181,144 @@ function getEditField(key) {
 // EDITAR TRANSAÇÃO
 // =====================
 function editTx(id) {
-  const tx  = state.transactions.find(t => t.id === id);
+  const tx = state.transactions.find(t => t.id === id);
   if (!tx) return;
-  const catOptions  = state.categories.map(c => ({ value: c.name, label: c.name }));
-  const bankOptions = [{ value: "", label: "-- nenhum --" }, ...state.banks.map(b => ({ value: b.id, label: b.name }))];
-  const cardOptions = [{ value: "", label: "-- nenhum --" }, ...state.cards.map(c => ({ value: c.id, label: c.name }))];
-  const methOptions = [{ value: "", label: "-- nenhum --" }, ...METHODS.map(m => ({ value: m, label: m }))];
 
-  openEditModal("Editar transação", [
-    { key: "type",    label: "Tipo",        type: "select",   value: tx.type,            options: [{value:"despesa",label:"Despesa"},{value:"receita",label:"Receita"}] },
-    { key: "desc",    label: "Descrição",   type: "text",     value: tx.description,     placeholder: "Descrição" },
-    { key: "amount",  label: "Valor (R$)",  type: "currency", value: tx.amount },
-    { key: "date",    label: "Data",        type: "date",     value: tx.date },
-    { key: "cat",     label: "Categoria",   type: "select",   value: tx.category||"",    options: [{value:"",label:"-- nenhuma --"}, ...catOptions] },
-    { key: "bank",    label: "Banco",       type: "select",   value: tx.bank_id||"",     options: bankOptions },
-    { key: "method",  label: "Método",      type: "select",   value: tx.payment_method||"", options: methOptions },
-    { key: "card",    label: "Cartão",      type: "select",   value: tx.card_id||"",     options: cardOptions },
-  ], async function() {
+  // Se parcelado, pergunta escopo antes de abrir o modal de edição
+  if (tx.installment_total > 1) {
+    const baseName = tx.description.replace(/\s*\(\d+\/\d+\)$/, "").trim();
+    const group = state.transactions.filter(t =>
+      t.installment_total === tx.installment_total &&
+      Number(t.card_id) === Number(tx.card_id) &&
+      t.description.replace(/\s*\(\d+\/\d+\)$/, "").trim() === baseName
+    );
+
+    _showDeleteScope(
+      `Editar <strong>${baseName}</strong>`,
+      `Esta compra tem <strong>${group.length} parcela(s)</strong>. O que deseja editar?`,
+      "Só esta parcela",
+      `Todas as ${group.length} parcelas`,
+      (all) => _openEditTxModal(id, all ? group.map(t => t.id) : [id])
+    );
+  } else {
+    _openEditTxModal(id, [id]);
+  }
+}
+
+function _openEditTxModal(primaryId, allIds) {
+  const tx        = state.transactions.find(t => t.id === primaryId);
+  const isDark    = !document.body.classList.contains("light-mode");
+  const bg2       = isDark ? "#16181f" : "#ffffff";
+  const bgInput   = isDark ? "#0f1117" : "#f4f5f7";
+  const border    = isDark ? "#2a2d3a" : "#e0e0e8";
+  const textColor = isDark ? "#e8e8e8" : "#1a1a2e";
+  const label     = isDark ? "#666"    : "#888";
+  const isGroup   = allIds.length > 1;
+
+  const catOpts  = state.categories.map(c => `<option value="${c.name}" ${tx.category===c.name?"selected":""}>${c.name}</option>`).join("");
+  const bankOpts = state.banks.map(b => `<option value="${b.id}" ${Number(tx.bank_id)===b.id?"selected":""}>${b.name}</option>`).join("");
+  const cardOpts = state.cards.map(c => `<option value="${c.id}" ${Number(tx.card_id)===c.id?"selected":""}>${c.name}</option>`).join("");
+  const methOpts = METHODS.map(m => `<option value="${m}" ${tx.payment_method===m?"selected":""}>${m}</option>`).join("");
+
+  const fmtVal = tx.amount ? Number(tx.amount).toLocaleString("pt-BR", { style:"currency", currency:"BRL" }) : "";
+
+  const inputStyle = `background:${bgInput};border:1px solid ${border};border-radius:8px;padding:9px 12px;font-size:13px;color:${textColor};width:100%;outline:none;font-family:inherit;height:38px`;
+  const selStyle   = `${inputStyle};appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:32px;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 10 10%22%3E%3Cpath fill=%22%237F77DD%22 d=%22M5 7L0 2h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center`;
+  const lbl        = (t) => `<label style="display:block;font-size:11px;color:${label};text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">${t}</label>`;
+  const row        = (html) => `<div style="margin-bottom:12px">${html}</div>`;
+
+  const modal = document.createElement("div");
+  modal.id = "edit-tx-modal";
+  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center;padding:1rem;font-family:system-ui,sans-serif";
+  modal.innerHTML = `
+    <div style="background:${bg2};border:1px solid ${border};border-radius:16px;padding:1.5rem;width:100%;max-width:480px;max-height:92vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
+        <div>
+          <span style="font-size:15px;font-weight:600;color:${textColor}">Editar lançamento</span>
+          ${isGroup ? `<div style="font-size:11px;color:var(--purple);margin-top:3px">Editando ${allIds.length} parcelas</div>` : ""}
+        </div>
+        <button onclick="document.getElementById('edit-tx-modal').remove()" style="background:none;border:none;cursor:pointer;font-size:18px;color:#666">✕</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">
+        ${row(`${lbl("Tipo")}<select id="etx-type" style="${selStyle}">
+          <option value="despesa" ${tx.type==="despesa"?"selected":""}>Despesa</option>
+          <option value="receita" ${tx.type==="receita"?"selected":""}>Receita</option>
+        </select>`)}
+        ${row(`${lbl("Data")}<input id="etx-date" type="date" value="${tx.date}" style="${inputStyle}">`)}
+      </div>
+
+      ${row(`${lbl("Descrição")}<input id="etx-desc" type="text" value="${tx.description.replace(/"/g,"&quot;")}" style="${inputStyle}">`)}
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">
+        ${row(`${lbl("Valor (R$)")}<input id="etx-amount" type="text" inputmode="numeric" value="${fmtVal}" oninput="formatCurrencyInput(this)" style="${inputStyle}">`)}
+        ${row(`${lbl("Categoria")}<select id="etx-cat" style="${selStyle}">
+          <option value="">-- nenhuma --</option>${catOpts}
+        </select>`)}
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">
+        ${row(`${lbl("Banco")}<select id="etx-bank" style="${selStyle}">
+          <option value="">-- nenhum --</option>${bankOpts}
+        </select>`)}
+        ${row(`${lbl("Método")}<select id="etx-method" style="${selStyle}">
+          <option value="">-- nenhum --</option>${methOpts}
+        </select>`)}
+      </div>
+
+      ${row(`${lbl("Cartão")}<select id="etx-card" style="${selStyle}">
+        <option value="">-- nenhum --</option>${cardOpts}
+      </select>`)}
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1rem">
+        <button onclick="document.getElementById('edit-tx-modal').remove()" style="background:transparent;border:1px solid ${border};color:#888;padding:9px 18px;border-radius:8px;cursor:pointer;font-size:13px">Cancelar</button>
+        <button id="etx-save" style="background:var(--purple);border:none;color:#fff;padding:9px 18px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500">Salvar</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+
+  document.getElementById("etx-save").onclick = async () => {
     const updates = {
-      type:           getEditField("type").value,
-      description:    getEditField("desc").value.trim(),
-      amount:         parseCurrency(getEditField("amount").value),
-      date:           getEditField("date").value,
-      category:       getEditField("cat").value    || "Outros",
-      bank_id:        getEditField("bank").value   ? parseInt(getEditField("bank").value)   : null,
-      payment_method: getEditField("method").value || null,
-      card_id:        getEditField("card").value   ? parseInt(getEditField("card").value)   : null,
+      type:           document.getElementById("etx-type").value,
+      description:    document.getElementById("etx-desc").value.trim(),
+      amount:         parseCurrency(document.getElementById("etx-amount").value),
+      date:           document.getElementById("etx-date").value,
+      category:       document.getElementById("etx-cat").value    || "Outros",
+      bank_id:        document.getElementById("etx-bank").value   ? parseInt(document.getElementById("etx-bank").value)   : null,
+      payment_method: document.getElementById("etx-method").value || null,
+      card_id:        document.getElementById("etx-card").value   ? parseInt(document.getElementById("etx-card").value)   : null,
     };
-    if (!updates.description || !updates.amount || !updates.date) return toast("Preencha descrição, valor e data.", "warning");
-    const { error } = await sb.from("transactions").update(updates).eq("id", id).eq("user_id", state.userId);
-    if (!error) {
-      Object.assign(state.transactions.find(t => t.id === id), updates);
-      closeEditModal(); render();
-    } else toast("Erro: " + error.message, "error");
-  });
+
+    if (!updates.description) return toast("Informe a descrição.", "warning");
+    if (!updates.amount)      return toast("Informe o valor.", "warning");
+    if (!updates.date)        return toast("Informe a data.", "warning");
+
+    // Para grupo: aplica só type, category, bank, method, card — não descrição/data/valor
+    // (cada parcela tem sua própria data e número na descrição)
+    const groupUpdates = {
+      type:           updates.type,
+      category:       updates.category,
+      bank_id:        updates.bank_id,
+      payment_method: updates.payment_method,
+      card_id:        updates.card_id,
+    };
+
+    let hadError = false;
+    for (const tid of allIds) {
+      const payload = allIds.length > 1 ? groupUpdates : updates;
+      const { error } = await sb.from("transactions").update(payload).eq("id", tid).eq("user_id", state.userId);
+      if (error) { hadError = true; toast("Erro: " + error.message, "error"); break; }
+      Object.assign(state.transactions.find(t => t.id === tid), payload);
+    }
+
+    if (!hadError) {
+      modal.remove();
+      toast("Lançamento atualizado!", "success");
+      render();
+    }
+  };
 }
 
 // =====================
