@@ -447,13 +447,23 @@ function renderDashboard() {
   const allTxs    = state.transactions;
   const txs            = allTxs.filter(t => t.date.substring(0,7) === state.dashMonth);
   const inc            = txs.filter(t => t.type === "receita").reduce((s, t) => s + parseFloat(t.amount), 0);
-  const exp            = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
+  const expTxs         = txs.filter(t => t.type === "despesa").reduce((s, t) => s + parseFloat(t.amount), 0);
+
+  // Contas fixas pagas no mes selecionado ja geraram transacao de despesa (expTxs).
+  // Somamos apenas as que ainda NAO foram pagas para nao contar em dobro.
+  const fixasPagas = new Set(
+    (state.fixed_payments || [])
+      .filter(p => p.month === state.dashMonth)
+      .map(p => Number(p.fixed_id))
+  );
+  const fixedPendente = state.fixed
+    .filter(f => !fixasPagas.has(Number(f.id)))
+    .reduce((s, f) => s + parseFloat(f.amount), 0);
+
+  const exp            = expTxs + fixedPendente;
   const bal            = inc - exp;
   const totalBankBalance = state.banks.reduce((s, b) => s + bankBalance(b), 0);
 
-  // Fixas e boletos sao exibidos como referencia, mas NAO entram no calculo
-  // de exp/bal para evitar dupla contagem com lancamentos manuais
-  const fixedTotal     = state.fixed.reduce((s, f) => s + parseFloat(f.amount), 0);
   const boletosDoMes   = state.boletos.filter(b => b.due_date.substring(0,7) === state.dashMonth);
   const boletosAtrasados = state.boletos.filter(b => b.due_date < state.dashMonth + "-01");
   const boletosTotal   = [...boletosDoMes, ...boletosAtrasados].reduce((s, b) => s + parseFloat(b.amount), 0);
@@ -537,7 +547,9 @@ function renderDashboard() {
       <div class="s-card">
         <div class="s-label">Gastos do mês</div>
         <div class="s-value red">${fmt(exp)}</div>
-        <div class="s-sub">Fixas estimadas: ${fmt(fixedTotal)}${boletosTotal > 0 ? ` · Boletos: ${fmt(boletosTotal)}` : ""}</div>
+        <div class="s-sub">
+          Lancamentos: ${fmt(expTxs)} · Fixas pendentes: ${fmt(fixedPendente)}${boletosTotal > 0 ? ` · Boletos: ${fmt(boletosTotal)}` : ""}
+        </div>
       </div>
     </div>
 
@@ -622,6 +634,8 @@ function renderLancamentos() {
   const cardOptions = state.cards.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
   const bankOptions = state.banks.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
 
+  const listHTML = buildTxGroupedHTML(state.transactions.slice(0, 30));
+
   document.getElementById("content").innerHTML = `
     <div class="section">
       <div class="section-title">Lançar Movimento</div>
@@ -635,7 +649,7 @@ function renderLancamentos() {
         </div>
         <div class="form-group">
           <label>Descrição *</label>
-          <input autocomplete="off" id="f-desc" placeholder="Ex: Supermercado" autocomplete="off" required>
+          <input autocomplete="off" id="f-desc" placeholder="Ex: Supermercado" required>
         </div>
         <div class="form-group" id="f-date-group">
           <label>Data *</label>
@@ -680,13 +694,193 @@ function renderLancamentos() {
     </div>
 
     <div class="section">
-      <div class="section-title">Últimos lançamentos</div>
-      ${state.transactions.slice(0, 10).map(tx => txRow(tx)).join("") || `<div class="empty">Nenhuma transação</div>`}
+      <div class="section-title">
+        Últimos lançamentos
+        <button class="btn btn-secondary btn-sm" onclick="openAllTxModal()">Ver todos</button>
+      </div>
+      <div id="lancamentos-list">${listHTML}</div>
     </div>
   `;
 
-  // Aplica estado inicial correto baseado no tipo selecionado
   setTimeout(onTxTypeChange, 0);
+}
+
+function toggleGroup(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === "none" ? "block" : "none";
+}
+
+// Agrupa parcelados e renderiza lista compacta
+function buildTxGroupedHTML(txList) {
+  if (!txList.length) return `<div class="empty">Nenhuma transação</div>`;
+
+  const groups  = [];
+  const usedIds = new Set();
+
+  txList.forEach(tx => {
+    if (usedIds.has(tx.id)) return;
+    if (tx.installment_total > 1) {
+      const baseName = tx.description.replace(/\s*\(\d+\/\d+\)$/, "").trim();
+      const siblings = txList.filter(t =>
+        !usedIds.has(t.id) &&
+        t.installment_total === tx.installment_total &&
+        Number(t.card_id) === Number(tx.card_id) &&
+        t.description.replace(/\s*\(\d+\/\d+\)$/, "").trim() === baseName
+      ).sort((a, b) => a.installment_number - b.installment_number);
+      siblings.forEach(s => usedIds.add(s.id));
+      groups.push({ type: "group", baseName, siblings, tx });
+    } else {
+      usedIds.add(tx.id);
+      groups.push({ type: "single", tx });
+    }
+  });
+
+  return groups.map(g => {
+    if (g.type === "single") return txRow(g.tx);
+
+    const { baseName, siblings, tx } = g;
+    const card      = state.cards.find(c => Number(c.id) === Number(tx.card_id));
+    const totalAmt  = siblings.reduce((s, t) => s + parseFloat(t.amount), 0);
+    const shown     = siblings.length;
+    const total     = tx.installment_total;
+    const firstDate = siblings[0]?.date;
+    const lastDate  = siblings[siblings.length - 1]?.date;
+    const groupId   = "grp-" + tx.id;
+
+    const parcelasHTML = siblings.map(t => `
+      <div class="tx-row" style="padding-left:44px;background:var(--bg3);border-bottom:1px solid var(--bg)">
+        <div class="tx-icon exp" style="width:26px;height:26px;font-size:11px;flex-shrink:0">↓</div>
+        <div class="tx-info">
+          <div class="tx-name" style="font-size:12px">${t.description}</div>
+          <div class="tx-sub">${new Date(t.date+"T00:00:00").toLocaleDateString("pt-BR")}
+            ${t.category ? `<span class="badge badge-cat">${t.category}</span>` : ""}
+          </div>
+        </div>
+        <span class="tx-amount red" style="font-size:13px">-${fmt(t.amount)}</span>
+        <button class="btn-icon" onclick="editTx(${t.id})" style="color:var(--purple);font-size:12px">✎</button>
+        <button class="btn-icon" onclick="deleteTx(${t.id})">✕</button>
+      </div>`).join("");
+
+    return `
+      <div style="border-bottom:1px solid var(--bg3)">
+        <div class="tx-row" style="border-bottom:none;cursor:pointer" onclick="toggleGroup('${groupId}')">
+          <div class="tx-icon exp">↓</div>
+          <div class="tx-info">
+            <div class="tx-name">
+              ${baseName}
+              <span style="font-size:11px;background:var(--purple);color:#fff;padding:1px 7px;border-radius:99px;margin-left:6px;font-weight:500">${shown}/${total}x</span>
+            </div>
+            <div class="tx-sub">
+              ${new Date(firstDate+"T00:00:00").toLocaleDateString("pt-BR")}
+              ${shown > 1 ? " → " + new Date(lastDate+"T00:00:00").toLocaleDateString("pt-BR") : ""}
+              ${card ? `<span class="badge badge-method" style="border-left:3px solid ${card.color||"#7F77DD"};padding-left:6px">${card.name}</span>` : ""}
+              <span style="font-size:10px;color:var(--text3);margin-left:4px">▼ expandir</span>
+            </div>
+          </div>
+          <span class="tx-amount red">-${fmt(totalAmt)}</span>
+        </div>
+        <div id="${groupId}" style="display:none">${parcelasHTML}</div>
+      </div>`;
+  }).join("");
+}
+
+// =====================
+// MODAL — TODOS OS LANÇAMENTOS
+// =====================
+function openAllTxModal() {
+  const isDark   = !document.body.classList.contains("light-mode");
+  const bg       = isDark ? "#0f1117" : "#f4f5f7";
+  const bg2      = isDark ? "#16181f" : "#ffffff";
+  const border   = isDark ? "#2a2d3a" : "#e0e0e8";
+  const textColor= isDark ? "#e8e8e8" : "#1a1a2e";
+  const selBg    = isDark ? "#0f1117" : "#f4f5f7";
+  const selColor = isDark ? "#e8e8e8" : "#1a1a2e";
+
+  const catOpts  = `<option value="">Todas as categorias</option>` +
+    state.categories.map(c => `<option value="${c.name}">${c.name}</option>`).join("");
+  const cardOpts = `<option value="">Todos os cartões</option>` +
+    state.cards.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+  const bankOpts = `<option value="">Todos os bancos</option>` +
+    state.banks.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
+
+  // Meses disponíveis
+  const months = [...new Set(state.transactions.map(t => t.date.substring(0,7)))].sort().reverse();
+  const monthOpts = `<option value="">Todos os meses</option>` + months.map(m => {
+    const [y, mo] = m.split("-");
+    const label = new Date(parseInt(y), parseInt(mo)-1, 1).toLocaleString("pt-BR", {month:"long", year:"numeric"});
+    return `<option value="${m}">${label}</option>`;
+  }).join("");
+
+  const modal = document.createElement("div");
+  modal.id = "all-tx-modal";
+  modal.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:300;display:flex;align-items:center;justify-content:center;padding:1rem;font-family:system-ui,sans-serif`;
+  modal.innerHTML = `
+    <div style="background:${bg2};border:1px solid ${border};border-radius:16px;width:100%;max-width:720px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
+      <div style="padding:1.2rem 1.4rem;border-bottom:1px solid ${border};display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+        <span style="font-size:15px;font-weight:600;color:${textColor}">Todos os lançamentos</span>
+        <button onclick="document.getElementById('all-tx-modal').remove()" style="background:none;border:none;cursor:pointer;font-size:18px;color:#666">✕</button>
+      </div>
+
+      <div style="padding:1rem 1.4rem;border-bottom:1px solid ${border};display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0">
+        <input id="atm-search" type="text" placeholder="Buscar descrição..." oninput="filterAllTxModal()"
+          style="background:${selBg};border:1px solid ${border};border-radius:8px;padding:7px 12px;font-size:13px;color:${selColor};outline:none;font-family:inherit;height:34px;flex:1;min-width:140px">
+        <select id="atm-month" onchange="filterAllTxModal()"
+          style="background:${selBg};border:1px solid ${border};border-radius:8px;padding:0 28px 0 10px;font-size:12px;color:${selColor};appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 10 10%22%3E%3Cpath fill=%22%237F77DD%22 d=%22M5 7L0 2h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;font-family:inherit;height:34px;outline:none;cursor:pointer">${monthOpts}</select>
+        <select id="atm-type" onchange="filterAllTxModal()"
+          style="background:${selBg};border:1px solid ${border};border-radius:8px;padding:0 28px 0 10px;font-size:12px;color:${selColor};appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 10 10%22%3E%3Cpath fill=%22%237F77DD%22 d=%22M5 7L0 2h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;font-family:inherit;height:34px;outline:none;cursor:pointer">
+          <option value="">Receitas e despesas</option>
+          <option value="despesa">Só despesas</option>
+          <option value="receita">Só receitas</option>
+        </select>
+        <select id="atm-cat" onchange="filterAllTxModal()"
+          style="background:${selBg};border:1px solid ${border};border-radius:8px;padding:0 28px 0 10px;font-size:12px;color:${selColor};appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 10 10%22%3E%3Cpath fill=%22%237F77DD%22 d=%22M5 7L0 2h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;font-family:inherit;height:34px;outline:none;cursor:pointer">${catOpts}</select>
+        <select id="atm-card" onchange="filterAllTxModal()"
+          style="background:${selBg};border:1px solid ${border};border-radius:8px;padding:0 28px 0 10px;font-size:12px;color:${selColor};appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 10 10%22%3E%3Cpath fill=%22%237F77DD%22 d=%22M5 7L0 2h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;font-family:inherit;height:34px;outline:none;cursor:pointer">${cardOpts}</select>
+        <select id="atm-bank" onchange="filterAllTxModal()"
+          style="background:${selBg};border:1px solid ${border};border-radius:8px;padding:0 28px 0 10px;font-size:12px;color:${selColor};appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 10 10%22%3E%3Cpath fill=%22%237F77DD%22 d=%22M5 7L0 2h10z%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;font-family:inherit;height:34px;outline:none;cursor:pointer">${bankOpts}</select>
+      </div>
+
+      <div id="atm-summary" style="padding:.6rem 1.4rem;border-bottom:1px solid ${border};display:flex;gap:20px;font-size:12px;flex-shrink:0;flex-wrap:wrap"></div>
+
+      <div id="atm-list" style="overflow-y:auto;flex:1;padding:.4rem 1.4rem 1rem"></div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+  filterAllTxModal();
+}
+
+function filterAllTxModal() {
+  const search  = (document.getElementById("atm-search")?.value || "").toLowerCase();
+  const month   = document.getElementById("atm-month")?.value   || "";
+  const type    = document.getElementById("atm-type")?.value    || "";
+  const cat     = document.getElementById("atm-cat")?.value     || "";
+  const cardId  = document.getElementById("atm-card")?.value    || "";
+  const bankId  = document.getElementById("atm-bank")?.value    || "";
+
+  let txs = state.transactions;
+  if (month)  txs = txs.filter(t => t.date.substring(0,7) === month);
+  if (type)   txs = txs.filter(t => t.type === type);
+  if (cat)    txs = txs.filter(t => t.category === cat);
+  if (cardId) txs = txs.filter(t => String(t.card_id) === String(cardId));
+  if (bankId) txs = txs.filter(t => String(t.bank_id) === String(bankId));
+  if (search) txs = txs.filter(t => t.description.toLowerCase().includes(search));
+
+  const inc = txs.filter(t => t.type==="receita").reduce((s,t) => s+parseFloat(t.amount), 0);
+  const exp = txs.filter(t => t.type==="despesa").reduce((s,t) => s+parseFloat(t.amount), 0);
+  const isDark = !document.body.classList.contains("light-mode");
+  const textColor = isDark ? "#e8e8e8" : "#1a1a2e";
+
+  const sumEl = document.getElementById("atm-summary");
+  if (sumEl) sumEl.innerHTML = `
+    <span style="color:#888">${txs.length} lançamento(s)</span>
+    <span style="color:var(--green)">Receitas: +${fmt(inc)}</span>
+    <span style="color:var(--red)">Despesas: -${fmt(exp)}</span>
+    <span style="color:${inc-exp>=0?"var(--green)":"var(--red)"};font-weight:600">Saldo: ${fmt(inc-exp)}</span>
+  `;
+
+  const listEl = document.getElementById("atm-list");
+  if (listEl) listEl.innerHTML = txs.length ? buildTxGroupedHTML(txs) : `<div class="empty">Nenhuma transação encontrada</div>`;
 }
 
 // Quando seleciona banco -> bloqueia cartao/parcelas (banco e cartao sao mutuamente exclusivos)
